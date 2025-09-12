@@ -1,0 +1,150 @@
+# Configuration for expense categorization rules
+categorization_rules:
+  transporte:
+    keywords:
+      - uber
+      - taxi
+      - metro
+      - bus
+      - transantiago
+      - bip
+      - cabify
+      - rideshare
+    subcategoria: transporte_publico
+  
+  alimentacion:
+    keywords:
+      - restaurant
+      - comida
+      - delivery
+      - rappi
+      - pedidos
+      - mcdonalds
+      - burger
+      - pizza
+      - sushi
+      - cafe
+      - bar
+    subcategoria: restaurantes
+  
+  supermercado:
+    keywords:
+      - jumbo
+      - lider
+      - santa isabel
+      - tottus
+      - unimarc
+      - supermercado
+      - "mercado central"
+      - "mercado mayorista"
+      - verduleria
+      - carniceria
+    subcategoria: supermercado
+  
+  # Nueva categoría para plataformas de pago/e-commerce
+  comercio_electronico:
+    keywords:
+      - mercadopago
+      - mercadolibre
+      - "mercado pago"
+      - "mercado libre"
+      - merpago
+      - aliexpress
+      - amazon
+      - marketplace
+      - ecommerce
+    subcategoria: compras_online
+  
+  combustible:
+    keywords:
+      - copec
+      - shell
+      - petrobras
+      - esso
+      - combustible
+      - gasolina
+      - bencina
+    subcategoria: gasolina
+  
+  servicios:
+    keywords:
+      - netflix
+      - spotify
+      - internet
+      - telefono
+      - luz
+      - agua
+      - gas
+      - electricidad
+      - cable
+      - streaming
+    subcategoria: suscripciones
+  
+  salud:
+    keywords:
+      - farmacia
+      - hospital
+      - doctor
+      - medico
+      - clinica
+      - dental
+      - laboratorio
+    subcategoria: medicos
+  
+  entretenimiento:
+    keywords:
+      - cine
+      - teatro
+      - concierto
+      - evento
+      - juego
+      - streaming
+    subcategoria: entretenimiento
+  
+  hogar:
+    keywords:
+      - ferreteria
+      - home
+      - sodimac
+      - easy
+      - muebles
+      - decoracion
+    subcategoria: mejoras_hogar
+  
+  ropa:
+    keywords:
+      - ropa
+      - zapatos
+      - tienda
+      - mall
+      - fashion
+      - vestimenta
+    subcategoria: vestimenta
+  
+  tecnologia:
+    keywords:
+      - computador
+      - celular
+      - electronico
+      - software
+      - app
+      - tecnologia
+    subcategoria: electronica
+
+# ML model configuration
+ml_config:
+  enabled: false
+  threshold: 0.8
+  retrain_frequency: "monthly"
+
+# Telegram configuration
+telegram:
+  timeout: 30
+  retry_attempts: 3
+  
+# Reconciliation settings
+reconciliation:
+  tolerance_fixed: 1000  # CLP
+  tolerance_percentage: 0.05  # 5%
+  date_window_days: 10
+  auto_match_threshold: 0.7
