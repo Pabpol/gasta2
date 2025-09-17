@@ -31,5 +31,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-# Comando de inicio (Railway asigna $PORT dinámicamente)
-CMD uvicorn backend_gastos.app:app --host 0.0.0.0 --port $PORT
+# Comando de inicio con puerto por defecto si $PORT no está definido
+CMD sh -c "uvicorn backend_gastos.app:app --host 0.0.0.0 --port ${PORT:-8000}"
