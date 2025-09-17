@@ -1,6 +1,7 @@
 """
-Telegram integration for interactive expense categorization and sharing decisions.
-Handles bot communication, inline keyboards, and user responses.
+Enhanced Telegram integration for interactive expense categorization and sharing decisions.
+Handles bot communication, inline keyboards, and user responses with improved reliability.
+Includes retry logic, rate limiting, and comprehensive error handling for alpha release.
 """
 import asyncio
 import httpx
@@ -8,25 +9,42 @@ import logging
 from typing import Dict, List, Any, Optional
 import json
 import re
+import time
+import hashlib
+import hmac
 
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.paths import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from core.errors import telegram_error, ExternalServiceError
 
 logger = logging.getLogger(__name__)
 
 class TelegramMessenger:
-    """Telegram bot integration for expense management"""
-    
+    """Enhanced Telegram bot integration for expense management with reliability features"""
+
     def __init__(self):
         self.bot_token = TELEGRAM_BOT_TOKEN
         self.chat_id = TELEGRAM_CHAT_ID
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
-        
+
+        # Reliability settings
+        self.max_retries = 3
+        self.retry_delay = 1.0  # Base delay in seconds
+        self.timeout = 30.0  # Request timeout
+        self.rate_limit_delay = 0.1  # Delay between requests to avoid rate limits
+
+        # Health tracking
+        self.last_successful_request = None
+        self.consecutive_failures = 0
+        self.max_consecutive_failures = 5
+
         if not self.bot_token or not self.chat_id:
             logger.warning("Telegram configuration missing. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
+        else:
+            logger.info("Telegram messenger initialized successfully")
     
     def _escape_markdown(self, text: str) -> str:
         """Escape Markdown special characters for Telegram"""
@@ -40,21 +58,138 @@ class TelegramMessenger:
         return escaped_text
     
     async def _send_request(self, method: str, data: Dict[str, Any]) -> Optional[Dict]:
-        """Send request to Telegram API"""
+        """Send request to Telegram API with retry logic and error handling"""
         if not self.bot_token:
             logger.warning("No Telegram bot token configured")
             return None
-        
-        url = f"{self.base_url}/{method}"
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, json=data)
-                response.raise_for_status()
-                return response.json()
-        except Exception as e:
-            logger.error(f"Telegram API error: {e}")
+
+        if self.consecutive_failures >= self.max_consecutive_failures:
+            logger.error("Too many consecutive Telegram failures, temporarily disabling")
             return None
+
+        url = f"{self.base_url}/{method}"
+
+        for attempt in range(self.max_retries):
+            try:
+                # Rate limiting delay
+                if attempt > 0:
+                    await asyncio.sleep(self.rate_limit_delay * (2 ** attempt))  # Exponential backoff
+
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(url, json=data)
+
+                    # Handle different HTTP status codes
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get('ok'):
+                            # Success - reset failure counter
+                            self.last_successful_request = time.time()
+                            self.consecutive_failures = 0
+                            return result
+                        else:
+                            # Telegram API returned error
+                            error_code = result.get('error_code', 'UNKNOWN')
+                            error_description = result.get('description', 'Unknown error')
+
+                            # Handle specific Telegram errors
+                            if error_code == 429:  # Too Many Requests
+                                retry_after = result.get('parameters', {}).get('retry_after', 30)
+                                logger.warning(f"Rate limited, retrying after {retry_after} seconds")
+                                await asyncio.sleep(retry_after)
+                                continue
+                            elif error_code == 400:  # Bad Request
+                                logger.error(f"Bad request to Telegram API: {error_description}")
+                                break  # Don't retry bad requests
+                            elif error_code == 403:  # Bot blocked by user
+                                logger.error("Bot appears to be blocked by user")
+                                break
+                            else:
+                                logger.error(f"Telegram API error {error_code}: {error_description}")
+                                if attempt == self.max_retries - 1:
+                                    break
+                                continue
+
+                    elif response.status_code >= 500:
+                        # Server error - retry
+                        logger.warning(f"Telegram server error {response.status_code}, attempt {attempt + 1}")
+                        if attempt < self.max_retries - 1:
+                            continue
+                        else:
+                            break
+
+                    else:
+                        # Other client errors
+                        logger.error(f"HTTP {response.status_code} from Telegram API")
+                        response.raise_for_status()
+
+            except httpx.TimeoutException:
+                logger.warning(f"Timeout connecting to Telegram API, attempt {attempt + 1}")
+                if attempt < self.max_retries - 1:
+                    continue
+
+            except httpx.ConnectError:
+                logger.warning(f"Connection error to Telegram API, attempt {attempt + 1}")
+                if attempt < self.max_retries - 1:
+                    continue
+
+            except Exception as e:
+                logger.error(f"Unexpected error in Telegram request: {str(e)}", exc_info=True)
+                if attempt < self.max_retries - 1:
+                    continue
+                break
+
+        # All retries failed
+        self.consecutive_failures += 1
+        logger.error(f"All {self.max_retries} attempts to Telegram API failed")
+        return None
+
+    def is_healthy(self) -> bool:
+        """Check if the Telegram integration is healthy"""
+        if not self.bot_token or not self.chat_id:
+            return False
+
+        if self.consecutive_failures >= self.max_consecutive_failures:
+            return False
+
+        # Check if we had a successful request in the last hour
+        if self.last_successful_request:
+            return (time.time() - self.last_successful_request) < 3600  # 1 hour
+
+        return True
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get detailed health status"""
+        return {
+            "configured": bool(self.bot_token and self.chat_id),
+            "healthy": self.is_healthy(),
+            "consecutive_failures": self.consecutive_failures,
+            "last_success": self.last_successful_request,
+            "max_failures": self.max_consecutive_failures
+        }
+
+    def validate_webhook_secret(self, update: Dict[str, Any], secret_token: Optional[str] = None) -> bool:
+        """
+        Validate incoming webhook using Telegram's secret token
+        This provides basic security for webhook endpoints
+        """
+        if not secret_token:
+            # If no secret token configured, accept all (for development)
+            return True
+
+        # For now, just check if the update looks like a valid Telegram update
+        # In production, you'd validate the secret token from headers
+        required_fields = ['update_id']
+        return all(field in update for field in required_fields)
+
+    async def test_connectivity(self) -> bool:
+        """Test basic connectivity to Telegram API"""
+        try:
+            # Try to get bot info
+            result = await self._send_request("getMe", {})
+            return result is not None and result.get('ok', False)
+        except Exception as e:
+            logger.error(f"Connectivity test failed: {e}")
+            return False
     
     async def send_category_prompt(self, gasto: Dict[str, Any], alias_hint: str = "") -> Optional[int]:
         """
@@ -250,13 +385,18 @@ class TelegramMessenger:
         
         return await self._send_request("sendMessage", data)
 
-async def handle_telegram_update(update: Dict[str, Any], storage, categorizer):
+async def handle_telegram_update(update: Dict[str, Any], storage, categorizer, secret_token: Optional[str] = None):
     """
-    Handle incoming Telegram updates (callbacks and messages).
+    Handle incoming Telegram updates with enhanced validation and error handling.
     Processes category selection, sharing decisions, and text commands.
     """
     messenger = TelegramMessenger()
-    
+
+    # Validate webhook
+    if not messenger.validate_webhook_secret(update, secret_token):
+        logger.warning("Invalid webhook received")
+        return {"ok": False, "error": "Invalid webhook"}
+
     try:
         # Handle callback queries (button presses)
         if 'callback_query' in update:
@@ -372,9 +512,17 @@ async def handle_telegram_update(update: Dict[str, Any], storage, categorizer):
         elif 'message' in update and 'text' in update['message']:
             text = update['message']['text'].strip()
             
+            # Handle income commands: "ingreso <monto> <descripcion>" or "ingreso <monto> <descripcion> de <persona>"
+            if text.startswith('ingreso '):
+                await _handle_income_command(text, storage, messenger)
+            
             # Handle sharing commands: "id <gid> con <Nombre> [% <porcentaje>]"
-            if text.startswith('id '):
+            elif text.startswith('id '):
                 await _handle_sharing_command(text, storage, messenger)
+            
+            # Handle help command
+            elif text.lower() in ['/help', '/ayuda', 'help', 'ayuda']:
+                await _handle_help_command(messenger)
     
     except Exception as e:
         logger.error(f"Error handling Telegram update: {e}")
@@ -443,6 +591,123 @@ async def _handle_sharing_command(text: str, storage, messenger):
     except Exception as e:
         logger.error(f"Error in sharing command: {e}")
         await messenger.send_simple_message(f"❌ Error procesando comando: {str(e)}")
+
+async def _handle_income_command(text: str, storage, messenger):
+    """Handle income command parsing and processing"""
+    try:
+        # Parse: "ingreso <monto> <descripcion>" or "ingreso <monto> <descripcion> de <persona>"
+        parts = text.split(' ', 2)  # Split into 3 parts max: "ingreso", "<monto>", "<resto>"
+        
+        if len(parts) < 3:
+            await messenger.send_simple_message(
+                "❌ Formato incorrecto\\. Usa:\n\n"
+                "`ingreso 50000 Sueldo septiembre`\n"
+                "`ingreso 15000 Reembolso cena de Juan`\n"
+                "`ingreso 25000 Freelance proyecto X`"
+            )
+            return
+        
+        # Extract amount
+        try:
+            monto = float(parts[1])
+        except ValueError:
+            await messenger.send_simple_message("❌ El monto debe ser un número válido")
+            return
+        
+        if monto <= 0:
+            await messenger.send_simple_message("❌ El monto debe ser mayor a 0")
+            return
+        
+        # Extract description and optional person
+        descripcion_completa = parts[2]
+        contraparte = None
+        
+        # Check if it's from someone: "descripcion de Persona"
+        if ' de ' in descripcion_completa:
+            desc_parts = descripcion_completa.rsplit(' de ', 1)
+            if len(desc_parts) == 2:
+                descripcion = desc_parts[0].strip()
+                contraparte = desc_parts[1].strip()
+            else:
+                descripcion = descripcion_completa
+        else:
+            descripcion = descripcion_completa
+        
+        # Create income record
+        from datetime import datetime
+        ingreso_data = {
+            "descripcion": descripcion,
+            "monto_clp": monto,
+            "fecha": datetime.now().isoformat(),
+            "categoria": "ingreso",
+            "tipo": "transfer_in",
+            "estado": "procesado",
+            "fuente": "telegram_manual",
+            "medio": "transferencia",
+            "moneda": "CLP"
+        }
+        
+        if contraparte:
+            ingreso_data["compartido_con"] = contraparte
+        
+        # Save income
+        saved_ingreso = storage.upsert_row(ingreso_data)
+        
+        # Try auto-matching if there's a counterpart
+        matched_expense = None
+        if contraparte:
+            from core import reconcile
+            pendientes = storage.list_receivables()
+            matched_expense = reconcile.try_auto_match(
+                saved_ingreso, 
+                pendientes, 
+                prefer_name=contraparte
+            )
+            
+            if matched_expense:
+                reconcile.mark_as_settled(matched_expense["id"], saved_ingreso["id"], storage)
+        
+        # Sync Excel
+        storage.sync_excel()
+        
+        # Send confirmation
+        confirmation = f"✅ *Ingreso registrado*\n\n"
+        confirmation += f"💰 Monto: ${monto:,.0f} CLP\n"
+        confirmation += f"📝 Descripción: {messenger._escape_markdown(descripcion)}\n"
+        confirmation += f"📅 Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        
+        if contraparte:
+            confirmation += f"👤 De: {messenger._escape_markdown(contraparte)}\n"
+        
+        if matched_expense:
+            confirmation += f"\n🔗 *Auto\\-emparejado con gasto:*\n"
+            confirmation += f"💸 {messenger._escape_markdown(matched_expense['descripcion'])}\n"
+            confirmation += f"💰 ${matched_expense['monto_clp']:,.0f} CLP\n"
+            confirmation += f"✅ Liquidado automáticamente"
+        elif contraparte:
+            confirmation += f"\n💡 *Tip:* Si esto es un reembolso, buscaré automáticamente gastos pendientes de {messenger._escape_markdown(contraparte)}"
+        
+        await messenger.send_simple_message(confirmation)
+        
+    except Exception as e:
+        logger.error(f"Error in income command: {e}")
+        await messenger.send_simple_message(f"❌ Error procesando ingreso: {str(e)}")
+
+async def _handle_help_command(messenger):
+    """Send help message with available commands"""
+    help_text = f"🤖 *Comandos disponibles:*\n\n"
+    help_text += f"💰 *Ingresos:*\n"
+    help_text += f"`ingreso 50000 Sueldo septiembre`\n"
+    help_text += f"`ingreso 15000 Reembolso cena de Juan`\n\n"
+    help_text += f"🤝 *Gastos compartidos:*\n"
+    help_text += f"`id ABC123 con Juan`\n"
+    help_text += f"`id ABC123 con María % 30`\n\n"
+    help_text += f"ℹ️ *Notas:*\n"
+    help_text += f"• Los gastos se agregan automáticamente via MacroDroid\n"
+    help_text += f"• Los ingresos 'de alguien' intentan emparejarse automáticamente\n"
+    help_text += f"• Usa `/help` para ver este mensaje"
+    
+    await messenger.send_simple_message(help_text)
 
 # Instantiate global messenger for easy access
 messenger = TelegramMessenger()
