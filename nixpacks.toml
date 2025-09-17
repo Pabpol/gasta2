@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = []
+
+[phases.install]
+cmds = []
+
+[phases.build]
+cmds = []
+
+[start]
+cmd = "uvicorn backend_gastos.app:app --host 0.0.0.0 --port $PORT"
