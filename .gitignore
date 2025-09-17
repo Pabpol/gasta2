@@ -37,5 +37,34 @@ models/
 .DS_Store
 Thumbs.db
 
+# Node.js (from frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build
+frontend_dashboard/.svelte-kit/
+frontend_dashboard/build/
+frontend_dashboard/.output/
+
+# Backend static (generated from frontend build)
+backend_gastos/static/*
+!backend_gastos/static/.gitkeep
+
 # Railway
 .railway/
+
+# Node.js (frontend dependencies)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build output
+frontend_dashboard/.svelte-kit/
+frontend_dashboard/build/
+
+# Backend static files (generated during build)
+backend_gastos/static/*
+!backend_gastos/static/.gitkeep
