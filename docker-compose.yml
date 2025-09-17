@@ -1,0 +1,48 @@
+# 🐳 Docker Compose - Orquestación de servicios
+# Este archivo define cómo los contenedores trabajan juntos
+
+version: '3.8'
+
+services:
+  # 🔙 SERVICIO BACKEND
+  backend:
+    build: 
+      context: ./backend_gastos
+      dockerfile: Dockerfile
+    container_name: gasta2-backend
+    ports:
+      - "8000:8000"  # puerto_host:puerto_contenedor
+    volumes:
+      - ./backend_gastos:/app  # sincroniza código para desarrollo
+      - backend_data:/app/data  # volumen persistente para datos
+    environment:
+      - PYTHONPATH=/app
+    networks:
+      - gasta2-network
+    restart: unless-stopped
+
+  # 🎨 SERVICIO FRONTEND  
+  frontend:
+    build:
+      context: ./frontend_dashboard
+      dockerfile: Dockerfile
+    container_name: gasta2-frontend
+    ports:
+      - "5173:5173"  # puerto_host:puerto_contenedor
+    volumes:
+      - ./frontend_dashboard:/app  # sincroniza código para desarrollo
+      - /app/node_modules  # evita conflictos con node_modules local
+    depends_on:
+      - backend  # frontend necesita que backend esté listo
+    networks:
+      - gasta2-network
+    restart: unless-stopped
+
+# 🌐 REDES - Para comunicación entre contenedores
+networks:
+  gasta2-network:
+    driver: bridge
+
+# 💾 VOLÚMENES - Para persistencia de datos
+volumes:
+  backend_data:
