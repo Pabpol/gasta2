@@ -30,6 +30,7 @@ gasta2/
 - 🔒 **Webhook Seguro** - Validación de requests con debugging avanzado
 - 📈 **Visualización de Datos** - Gráficos y análisis de gastos
 - 🔄 **Sincronización Automática** - Entre Parquet y Excel
+- 🗑️ **Gestión Completa de Gastos** - Crear, leer, actualizar y eliminar gastos
 
 ## 🚀 Deployment
 
@@ -89,6 +90,52 @@ curl https://tu-app.railway.app/api/health
 - **API Redoc:** `/api/redoc`
 
 Ver [DEPLOY.md](DEPLOY.md) para guía completa y troubleshooting.
+
+## 🔌 API Endpoints
+
+### Gastos (Expenses)
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `GET` | `/api/gastos` | Obtener todos los gastos |
+| `POST` | `/api/gasto` | Crear nuevo gasto |
+| `DELETE` | `/api/gasto/{id}` | **🆕** Eliminar gasto por ID |
+| `PUT` | `/api/gasto/{id}/categoria` | Actualizar categoría de gasto |
+
+### Dashboard
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `GET` | `/api/dashboard/summary` | Resumen general del dashboard |
+| `GET` | `/api/dashboard/categories` | Desglose por categorías |
+| `GET` | `/api/dashboard/trends` | Tendencias mensuales |
+
+### Sistema
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `GET` | `/api/health` | Health check del sistema |
+| `GET` | `/api/docs` | Documentación interactiva de la API |
+
+### Ejemplos de Uso
+
+```bash
+# Crear un gasto
+curl -X POST https://tu-app.railway.app/api/gasto \
+  -H "Content-Type: application/json" \
+  -d '{
+    "descripcion": "Almuerzo en restaurante",
+    "monto_clp": 15000,
+    "medio": "TC",
+    "fuente": "manual"
+  }'
+
+# Eliminar un gasto
+curl -X DELETE https://tu-app.railway.app/api/gasto/123e4567-e89b-12d3-a456-426614174000
+
+# Obtener todos los gastos
+curl https://tu-app.railway.app/api/gastos
+```
 
 ## 📱 Integración MacroDroid
 
