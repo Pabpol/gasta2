@@ -4,7 +4,7 @@
         "builder": "DOCKERFILE"
     },
     "deploy": {
-        "startCommand": "/bin/sh -c \"exec uvicorn backend_gastos.app:app --host 0.0.0.0 --port ${PORT:-8000}\"",
+        "startCommand": "/bin/sh -c \"export PYTHONPATH=/app/backend_gastos:$PYTHONPATH && exec uvicorn backend_gastos.app:app --host 0.0.0.0 --port ${PORT:-8000}\"",
         "healthcheckPath": "/api/health",
         "healthcheckTimeout": 300,
         "restartPolicyType": "ON_FAILURE",
