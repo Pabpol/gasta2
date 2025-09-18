@@ -901,7 +901,8 @@ async def telegram_webhook(update: Dict[str, Any], request: Request):
             "update_type": list(update.keys()),
             "has_callback_query": 'callback_query' in update,
             "has_message": 'message' in update,
-            "secret_token_provided": bool(secret_token)
+            "secret_token_provided": bool(secret_token),
+            "update_content": update  # Log full update for debugging
         })
 
         await handle_telegram_update(update, storage, categorizer, secret_token)
@@ -1050,6 +1051,19 @@ async def setup_telegram_webhook(request: Request):
 
     except Exception as e:
         request_logger.error("Error setting up webhook", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/telegram/test-webhook")
+async def test_telegram_webhook():
+    """Send a test message to verify webhook is working"""
+    try:
+        success = await messenger.send_simple_message("🧪 *Test webhook message*\n\nSi ves este mensaje, el webhook está funcionando correctamente.")
+        if success:
+            return {"success": True, "message": "Test message sent successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to send test message")
+    except Exception as e:
+        logger.error(f"Error sending test message: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/telegram/webhook-info")
