@@ -38,15 +38,15 @@ RUN cd frontend_dashboard && \
 # Copiar archivos del frontend construido al directorio estático del backend
 RUN rm -rf backend_gastos/static/* && \
     echo "=== SVELTE BUILD OUTPUT STRUCTURE ===" && \
-    find frontend_dashboard/.svelte-kit/output/client/ -type f | head -20 && \
-    echo "=== COPYING FILES ===" && \
+    find frontend_dashboard/.svelte-kit/output/client/ -name "index.html" -o -name "*.js" -o -name "*.css" | head -10 && \
+    echo "=== COPYING ALL FILES ===" && \
     cp -r frontend_dashboard/.svelte-kit/output/client/* backend_gastos/static/ 2>/dev/null || true && \
-    echo "=== STATIC DIRECTORY CONTENTS ===" && \
+    echo "=== SPECIFICALLY COPYING INDEX.HTML ===" && \
+    cp frontend_dashboard/.svelte-kit/output/client/index.html backend_gastos/static/index.html 2>/dev/null || echo "Failed to copy index.html" && \
+    echo "=== FINAL STATIC DIRECTORY CONTENTS ===" && \
     ls -la backend_gastos/static/ && \
-    echo "=== LOOKING FOR INDEX.HTML ===" && \
-    find backend_gastos/static/ -name "index.html" -type f 2>/dev/null || echo "index.html not found" && \
-    echo "=== CHECKING _APP DIRECTORY ===" && \
-    ls -la backend_gastos/static/_app/ 2>/dev/null || echo "_app directory not found"
+    echo "=== VERIFYING INDEX.HTML EXISTS ===" && \
+    test -f backend_gastos/static/index.html && echo "✅ index.html found!" || echo "❌ index.html missing!"
 
 # Exponer puerto (Railway lo asigna automáticamente)
 EXPOSE 8000
