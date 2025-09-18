@@ -190,6 +190,33 @@ class TelegramMessenger:
         except Exception as e:
             logger.error(f"Connectivity test failed: {e}")
             return False
+
+    async def setup_webhook(self, webhook_url: str) -> bool:
+        """Setup webhook for Telegram bot"""
+        try:
+            data = {
+                "url": webhook_url,
+                "allowed_updates": ["message", "callback_query"]
+            }
+            result = await self._send_request("setWebhook", data)
+            if result and result.get('ok'):
+                logger.info(f"Webhook configured successfully: {webhook_url}")
+                return True
+            else:
+                logger.error(f"Failed to configure webhook: {result}")
+                return False
+        except Exception as e:
+            logger.error(f"Error setting up webhook: {e}")
+            return False
+
+    async def get_webhook_info(self):
+        """Get current webhook information"""
+        try:
+            result = await self._send_request("getWebhookInfo", {})
+            return result
+        except Exception as e:
+            logger.error(f"Error getting webhook info: {e}")
+            return None
     
     async def send_category_prompt(self, gasto: Dict[str, Any], alias_hint: str = "") -> Optional[int]:
         """
@@ -413,6 +440,13 @@ async def handle_telegram_update(update: Dict[str, Any], storage, categorizer, s
                 "message_id": message_id,
                 "from_user": callback.get('from', {}).get('id')
             })
+
+            # Answer the callback query to remove loading state
+            callback_id = callback.get('id')
+            if callback_id:
+                await messenger._send_request("answerCallbackQuery", {
+                    "callback_query_id": callback_id
+                })
             
             if data.startswith('cat:'):
                 # Category selection: cat:<gid>:<categoria>

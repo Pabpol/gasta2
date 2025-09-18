@@ -1013,6 +1013,66 @@ async def send_telegram_match_notification(ingreso: Dict[str, Any], expense: Dic
     """Legacy function - use send_telegram_match_notification_safe instead"""
     await send_telegram_match_notification_safe(ingreso, expense, auto_matched)
 
+# Telegram webhook management endpoints
+@app.post("/api/telegram/setup-webhook")
+async def setup_telegram_webhook(request: Request):
+    """Setup Telegram webhook for the current deployment"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Get the base URL from Railway environment or request
+        base_url = os.getenv("RAILWAY_STATIC_URL") or f"https://{request.headers.get('host', 'localhost')}"
+
+        # Ensure we have https for Telegram webhooks
+        if not base_url.startswith("https://"):
+            if base_url.startswith("http://"):
+                base_url = base_url.replace("http://", "https://")
+            else:
+                base_url = f"https://{base_url}"
+
+        webhook_url = f"{base_url}/telegram/webhook"
+
+        request_logger.info("Setting up Telegram webhook", extra={
+            "webhook_url": webhook_url,
+            "base_url": base_url
+        })
+
+        success = await messenger.setup_webhook(webhook_url)
+
+        if success:
+            return {
+                "success": True,
+                "message": "Webhook configured successfully",
+                "webhook_url": webhook_url
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to configure webhook")
+
+    except Exception as e:
+        request_logger.error("Error setting up webhook", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/telegram/webhook-info")
+async def get_telegram_webhook_info(request: Request):
+    """Get current Telegram webhook information"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        webhook_info = await messenger.get_webhook_info()
+
+        request_logger.info("Retrieved webhook info", extra={
+            "webhook_info": webhook_info
+        })
+
+        return {
+            "success": True,
+            "webhook_info": webhook_info
+        }
+
+    except Exception as e:
+        request_logger.error("Error getting webhook info", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Configuration endpoints
 @app.get("/api/config/period")
 async def get_period_config():
