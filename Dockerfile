@@ -31,9 +31,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-# Copiar script de inicio
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
-
-# Comando de inicio usando script
-CMD ["/app/start.sh"]
+# Comando de inicio directo y simple
+CMD sh -c "PORT=\${PORT:-8000} && echo \"Starting on port \$PORT\" && uvicorn backend_gastos.app:app --host 0.0.0.0 --port \$PORT"
