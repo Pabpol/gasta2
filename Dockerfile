@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y \
 # Crear directorio de trabajo
 WORKDIR /app
 
+# Configurar PYTHONPATH para que Python encuentre los módulos
+ENV PYTHONPATH=/app
+
 # Copiar archivos de dependencias primero (para aprovechar cache de Docker)
 COPY backend_gastos/requirements.txt backend_gastos/requirements.txt
 
