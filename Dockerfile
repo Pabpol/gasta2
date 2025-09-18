@@ -37,10 +37,16 @@ RUN cd frontend_dashboard && \
 
 # Copiar archivos del frontend construido al directorio estático del backend
 RUN rm -rf backend_gastos/static/* && \
-    cp -r frontend_dashboard/.svelte-kit/output/client/* backend_gastos/static/ && \
-    mkdir -p backend_gastos/static/_app && \
-    cp -r frontend_dashboard/.svelte-kit/output/client/_app/* backend_gastos/static/_app/ && \
-    cp frontend_dashboard/.svelte-kit/output/client/index.html backend_gastos/static/ 2>/dev/null || true
+    echo "=== SVELTE BUILD OUTPUT STRUCTURE ===" && \
+    find frontend_dashboard/.svelte-kit/output/client/ -type f | head -20 && \
+    echo "=== COPYING FILES ===" && \
+    cp -r frontend_dashboard/.svelte-kit/output/client/* backend_gastos/static/ 2>/dev/null || true && \
+    echo "=== STATIC DIRECTORY CONTENTS ===" && \
+    ls -la backend_gastos/static/ && \
+    echo "=== LOOKING FOR INDEX.HTML ===" && \
+    find backend_gastos/static/ -name "index.html" -type f 2>/dev/null || echo "index.html not found" && \
+    echo "=== CHECKING _APP DIRECTORY ===" && \
+    ls -la backend_gastos/static/_app/ 2>/dev/null || echo "_app directory not found"
 
 # Exponer puerto (Railway lo asigna automáticamente)
 EXPOSE 8000

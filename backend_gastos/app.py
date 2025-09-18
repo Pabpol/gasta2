@@ -1174,11 +1174,23 @@ if frontend_static.exists():
     static_files = list(frontend_static.iterdir())
     logger.info(f"Frontend static directory contents: {[f.name for f in static_files]}")
 
+    # Check for index.html specifically
+    index_html = frontend_static / "index.html"
+    logger.info(f"Index.html exists: {index_html.exists()}")
+    if index_html.exists():
+        logger.info(f"Index.html size: {index_html.stat().st_size} bytes")
+
     if static_files:
         logger.info("Mounting frontend static files")
         app.mount("/static", StaticFiles(directory=str(frontend_static / "_app")), name="static")
         app.mount("/", StaticFiles(directory=str(frontend_static), html=True), name="frontend")
         logger.info("Frontend static files mounted successfully")
+
+        # List all files in static directory for debugging
+        logger.info("Full contents of static directory:")
+        for item in frontend_static.rglob("*"):
+            if item.is_file():
+                logger.info(f"  {item.relative_to(frontend_static)} ({item.stat().st_size} bytes)")
     else:
         logger.warning("Frontend static directory exists but is empty")
 else:
