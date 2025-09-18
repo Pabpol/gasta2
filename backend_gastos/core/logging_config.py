@@ -111,7 +111,8 @@ def setup_logging(
         formatter = StructuredFormatter()
     else:
         formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s'
+            '%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s',
+            defaults={'request_id': 'N/A'}
         )
 
     handlers = []
