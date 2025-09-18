@@ -367,10 +367,14 @@ class TelegramMessenger:
             }
         }
         
+        logger.info(f"Sending category prompt for gasto_id={gasto_id}")
         result = await self._send_request("sendMessage", data)
         if result and result.get('ok'):
+            logger.info(f"Category prompt sent successfully, message_id={result['result']['message_id']}")
             return result['result']['message_id']
-        return None
+        else:
+            logger.error(f"Failed to send category prompt: {result}")
+            return None
     
     async def send_simple_message(self, text: str):
         """Send a simple text message"""
@@ -403,34 +407,47 @@ async def handle_telegram_update(update: Dict[str, Any], storage, categorizer, s
             callback = update['callback_query']
             data = callback.get('data', '')
             message_id = callback['message']['message_id']
+
+            logger.info(f"Received callback query: {data}", extra={
+                "callback_data": data,
+                "message_id": message_id,
+                "from_user": callback.get('from', {}).get('id')
+            })
             
             if data.startswith('cat:'):
                 # Category selection: cat:<gid>:<categoria>
                 _, gasto_id, categoria = data.split(':', 2)
-                
+
+                logger.info(f"Processing category selection: gasto_id={gasto_id}, categoria={categoria}")
+
                 # Update expense with category
                 gasto = storage.get(gasto_id)
                 if gasto:
+                    logger.info(f"Found expense: {gasto.get('descripcion', 'N/A')}")
                     gasto['categoria'] = categoria
                     gasto['estado'] = 'categorizado'
-                    
+
                     # Auto-categorize to get subcategory
                     _, subcategoria, _, confidence = categorizer.categorize_one(gasto)
                     gasto['subcategoria'] = subcategoria
                     gasto['ml_confidence'] = confidence
-                    
+
                     storage.upsert_row(gasto)
                     storage.sync_excel()
-                    
+
                     # Edit message to show categorization success
                     success_text = f"✅ *Gasto categorizado como: {messenger._escape_markdown(categoria)}*\n\n"
                     success_text += f"💰 ${gasto['monto_clp']:,.0f} CLP\n"
                     success_text += f"🏪 {messenger._escape_markdown(gasto['descripcion'])}"
-                    
+
                     await messenger.edit_message(message_id, success_text)
-                    
+
                     # Ask about sharing
                     await messenger.send_share_prompt(gasto)
+                    logger.info(f"Category selection processed successfully for gasto_id={gasto_id}")
+                else:
+                    logger.error(f"Expense not found: gasto_id={gasto_id}")
+                    await messenger.send_simple_message(f"❌ Error: Gasto con ID {gasto_id} no encontrado")
             
             elif data.startswith('share:'):
                 # Share selection: share:<gid>:<percentage>

@@ -897,6 +897,13 @@ async def telegram_webhook(update: Dict[str, Any], request: Request):
         # Optional: Get secret token from headers for validation
         secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
 
+        request_logger.info("Received Telegram webhook", extra={
+            "update_type": list(update.keys()),
+            "has_callback_query": 'callback_query' in update,
+            "has_message": 'message' in update,
+            "secret_token_provided": bool(secret_token)
+        })
+
         await handle_telegram_update(update, storage, categorizer, secret_token)
         return {"ok": True}
     except Exception as e:
