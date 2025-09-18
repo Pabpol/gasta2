@@ -32,6 +32,8 @@ models/
 
 # Logs
 *.log
+logs.*.json
+railway-logs/
 
 # OS
 .DS_Store

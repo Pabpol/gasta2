@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { expenseActions, expenses, loading, error } from '$lib/stores/data';
-	import { formatCurrency, formatDate, expensesApi } from '$lib/utils/api';
+	import { formatCurrency, formatDate, expensesApi, type Expense } from '$lib/utils/api';
 	
 	// Filter state
 	let filters = {
@@ -28,6 +28,12 @@
 	let formLoading = false;
 	let formError: string | null = null;
 	let formSuccess: string | null = null;
+
+	// Delete functionality state
+	let showDeleteModal = false;
+	let expenseToDelete: Expense | null = null;
+	let deleteLoading = false;
+	let deleteError: string | null = null;
 
 	// Available categories
 	const categories = [
@@ -172,6 +178,40 @@
 			montoMin: 0,
 			montoMax: 0
 		};
+	}
+
+	// Delete functionality functions
+	function confirmDelete(expense: Expense) {
+		expenseToDelete = expense;
+		showDeleteModal = true;
+		deleteError = null;
+	}
+
+	async function handleDelete() {
+		if (!expenseToDelete) return;
+
+		deleteLoading = true;
+		deleteError = null;
+
+		try {
+			await expensesApi.delete(expenseToDelete.id);
+
+			// Success - reload expenses and close modal
+			expenseActions.loadAll();
+			showDeleteModal = false;
+			expenseToDelete = null;
+
+		} catch (err) {
+			deleteError = err instanceof Error ? err.message : 'Error al eliminar el gasto';
+		} finally {
+			deleteLoading = false;
+		}
+	}
+
+	function cancelDelete() {
+		showDeleteModal = false;
+		expenseToDelete = null;
+		deleteError = null;
 	}
 	
 	function getCategoryColor(categoria: string): string {
@@ -576,6 +616,9 @@
 								<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
 									Fuente
 								</th>
+								<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+									Acciones
+								</th>
 							</tr>
 						</thead>
 						<tbody class="bg-white divide-y divide-gray-200">
@@ -605,6 +648,15 @@
 									<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
 										{expense.fuente}
 									</td>
+									<td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+										<button
+											class="text-red-600 hover:text-red-900 transition-colors duration-200"
+											on:click={() => confirmDelete(expense)}
+											title="Eliminar gasto"
+										>
+											🗑️
+										</button>
+									</td>
 								</tr>
 							{/each}
 						</tbody>
@@ -624,4 +676,67 @@
 			{/if}
 		</div>
 	</div>
+
+	<!-- Delete Confirmation Modal -->
+	{#if showDeleteModal && expenseToDelete}
+		<div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50" on:click={cancelDelete}>
+			<div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white" on:click|stopPropagation>
+				<div class="mt-3">
+					<div class="flex items-center justify-center">
+						<div class="text-red-500 text-4xl">⚠️</div>
+					</div>
+					<h3 class="text-lg font-medium text-gray-900 text-center mt-4">
+						¿Eliminar gasto?
+					</h3>
+					<div class="mt-4 px-4">
+						<p class="text-sm text-gray-500 text-center">
+							¿Estás seguro de que quieres eliminar este gasto?
+						</p>
+						<div class="mt-4 bg-gray-50 rounded-md p-3">
+							<div class="text-sm">
+								<p><strong>Descripción:</strong> {expenseToDelete.descripcion}</p>
+								<p><strong>Monto:</strong> {formatCurrency(expenseToDelete.monto_tu_parte)}</p>
+								<p><strong>Fecha:</strong> {formatDate(expenseToDelete.fecha)}</p>
+								<p><strong>Categoría:</strong> {expenseToDelete.categoria}</p>
+							</div>
+						</div>
+					</div>
+
+					{#if deleteError}
+						<div class="mt-4 bg-red-50 border border-red-200 rounded-md p-3">
+							<div class="flex">
+								<div class="text-red-400 text-sm">⚠️</div>
+								<div class="ml-2">
+									<p class="text-sm text-red-700">{deleteError}</p>
+								</div>
+							</div>
+						</div>
+					{/if}
+
+					<div class="flex space-x-3 mt-6">
+						<button
+							type="button"
+							class="flex-1 btn btn-secondary"
+							on:click={cancelDelete}
+							disabled={deleteLoading}
+						>
+							❌ Cancelar
+						</button>
+						<button
+							type="button"
+							class="flex-1 btn bg-red-600 hover:bg-red-700 text-white"
+							on:click={handleDelete}
+							disabled={deleteLoading}
+						>
+							{#if deleteLoading}
+								⏳ Eliminando...
+							{:else}
+								🗑️ Eliminar
+							{/if}
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>

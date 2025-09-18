@@ -206,6 +206,29 @@ def get_all_data() -> pd.DataFrame:
     """Get all data as DataFrame"""
     return _load_data()
 
+def delete_row(id: str) -> bool:
+    """Delete a row by ID"""
+    df = _load_data()
+
+    # Find the row to delete
+    row_idx = df[df["id"] == id].index
+
+    if len(row_idx) == 0:
+        logger.warning(f"Row with id {id} not found")
+        return False
+
+    # Delete the row
+    df = df.drop(row_idx[0])
+
+    # Save the updated data
+    _save_data(df)
+
+    # Sync with Excel
+    sync_excel()
+
+    logger.info(f"Deleted row with id: {id}")
+    return True
+
 def update_settlement_status(expense_id: str, status: str):
     """Update settlement status for an expense"""
     row = get(expense_id)

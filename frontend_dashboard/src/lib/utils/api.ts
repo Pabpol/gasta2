@@ -122,6 +122,12 @@ export const expensesApi = {
         });
         return response.data;
     },
+
+    // Delete expense
+    delete: async (id: string) => {
+        const response = await api.delete(`/api/gasto/${id}`);
+        return response.data;
+    },
 };
 
 export const incomeApi = {
