@@ -4,9 +4,10 @@
         "builder": "DOCKERFILE"
     },
     "deploy": {
-        "startCommand": "uvicorn backend_gastos.app:app --host 0.0.0.0 --port $PORT",
+        "startCommand": "sh -c 'PORT=${PORT:-8000} && uvicorn backend_gastos.app:app --host 0.0.0.0 --port $PORT'",
         "healthcheckPath": "/api/health",
-        "healthcheckTimeout": 100,
-        "restartPolicyType": "ON_FAILURE"
+        "healthcheckTimeout": 300,
+        "restartPolicyType": "ON_FAILURE",
+        "healthcheckInterval": 30
     }
 }
