@@ -39,5 +39,4 @@ RUN rm -rf backend_gastos/static/* && \
 # Exponer puerto (Railway lo asigna automáticamente)
 EXPOSE 8000
 
-# Comando de inicio simple
-CMD ["uvicorn", "backend_gastos.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# No CMD - Railway usará el startCommand del railway.json
