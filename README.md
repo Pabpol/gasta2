@@ -10,19 +10,26 @@ gasta2/
 │   ├── app.py              # Aplicación principal
 │   ├── core/               # Lógica del negocio
 │   ├── integrations/       # Telegram bot
+│   ├── static/             # Archivos frontend compilados
 │   └── ...                 # Configuración y deployment
-├── frontend_web/           # 🔮 [FUTURO] Dashboard Web
+├── frontend_dashboard/      # 🎨 Dashboard Web (SvelteKit)
+│   ├── src/                # Código fuente
+│   ├── build/              # Archivos compilados (generado)
+│   └── package.json        # Dependencias Node.js
 └── mobile_app/            # 📱 [FUTURO] App Android
 ```
 
 ## ✨ Características Actuales
 
-- 🤖 **Bot de Telegram** - Notificaciones automáticas y confirmación de gastos
+- 🎨 **Dashboard Web Completo** - Interfaz moderna con SvelteKit para gestión de gastos
+- 🤖 **Bot de Telegram** - Notificaciones automáticas y confirmación de gastos con botones interactivos
 - 📱 **Integración MacroDroid** - Automatización de entrada de gastos desde notificaciones
 - 🏷️ **Categorización Automática** - ML para clasificar gastos por comercio
-- 📊 **Almacenamiento Excel** - Compatible con sistemas existentes
-- ☁️ **Deploy en Railway** - Listo para producción
-- 🔒 **Webhook Seguro** - Validación de requests
+- 📊 **Almacenamiento Dual** - Parquet eficiente + Excel para compatibilidad
+- ☁️ **Deploy en Railway** - Listo para producción con Docker
+- 🔒 **Webhook Seguro** - Validación de requests con debugging avanzado
+- 📈 **Visualización de Datos** - Gráficos y análisis de gastos
+- 🔄 **Sincronización Automática** - Entre Parquet y Excel
 
 ## 🚀 Deployment
 
@@ -78,7 +85,8 @@ curl https://tu-app.railway.app/api/health
 - **API Base:** `https://tu-app.railway.app`
 - **Health Check:** `/api/health`
 - **API Docs:** `/api/docs`
-- **Dashboard:** `/` (próximamente)
+- **Dashboard Web:** `/` (¡Ya disponible!)
+- **API Redoc:** `/api/redoc`
 
 Ver [DEPLOY.md](DEPLOY.md) para guía completa y troubleshooting.
 
@@ -94,11 +102,11 @@ Ver [backend_gastos/MACRODROID_CONFIG.md](backend_gastos/MACRODROID_CONFIG.md) p
 
 ## 🎯 Roadmap Futuro
 
-### Frontend Web Dashboard 🖥️
+### Frontend Web Dashboard 🖥️ ✅ IMPLEMENTADO
 - 📊 Visualización de gastos y tendencias
 - 🎛️ Configuración de categorías
 - 📈 Reportes y análisis
-- 💾 Migración a base de datos real
+- 💾 Migración a base de datos real (próximamente)
 
 ### App Mobile 📱
 - 📷 Escaneo de recibos con OCR

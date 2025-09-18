@@ -64,16 +64,24 @@ Guía completa para desplegar el MVP del sistema de gestión de gastos en Railwa
 ### Paso 4: Verificar Deploy
 
 1. **Revisa los logs**
-   - Ve a la pestaña "Deployments" en Railway
-   - Haz clic en el deploy activo para ver logs
+    - Ve a la pestaña "Deployments" en Railway
+    - Haz clic en el deploy activo para ver logs
 
 2. **Obtén la URL del servicio**
-   - En "Settings" > "Domains"
-   - Railway te dará una URL como: `https://gasta2-production.up.railway.app`
+    - En "Settings" > "Domains"
+    - Railway te dará una URL como: `https://gasta2-production.up.railway.app`
 
 3. **Prueba el health check**
-   - Ve a: `https://tu-url.railway.app/api/health`
-   - Deberías ver un JSON con status "healthy"
+    - Ve a: `https://tu-url.railway.app/api/health`
+    - Deberías ver un JSON con status "healthy"
+
+4. **Accede al Dashboard Web**
+    - Ve directamente a: `https://tu-url.railway.app/`
+    - El dashboard web ya está disponible y funcionando
+
+5. **Verifica la API**
+    - Documentación Swagger: `https://tu-url.railway.app/api/docs`
+    - Documentación ReDoc: `https://tu-url.railway.app/api/redoc`
 
 ---
 
@@ -118,7 +126,7 @@ GET  /api/dashboard/categories  # Breakdown por categorías
 ## 💾 Almacenamiento de Datos
 
 ### Sistema de Archivos
-- **Parquet**: Almacenamiento principal eficiente
+- **Parquet**: Almacenamiento principal eficiente con pyarrow
 - **Excel**: Sincronización automática para compatibilidad
 - **JSON**: Configuraciones y presupuestos
 
@@ -129,6 +137,14 @@ GET  /api/dashboard/categories  # Breakdown por categorías
 ├── presupuestos.json                 # Presupuestos
 └── backups/                         # Respaldos automáticos
 ```
+
+### Configuración Técnica Actual
+- **Python**: 3.11 con FastAPI
+- **Node.js**: 20.x para frontend
+- **Base de datos**: Parquet + Excel (eficiente para uso personal)
+- **Frontend**: SvelteKit compilado y servido por FastAPI
+- **Container**: Docker multi-stage build
+- **Deploy**: Railway con configuración automática
 
 ### Backup Automático
 - El sistema crea backups automáticamente
@@ -169,6 +185,15 @@ GET  /api/dashboard/categories  # Breakdown por categorías
 1. Revisa los logs en Railway
 2. Verifica que `requirements.txt` tenga versiones compatibles
 3. Asegúrate de que `railway.json` esté correcto
+4. Verifica que el Dockerfile use Node.js 20.x
+5. Confirma que pyarrow esté incluido en requirements.txt
+
+### Problemas con el Dashboard Web
+**Síntomas**: Dashboard no carga o muestra error 404
+**Solución**:
+1. Verifica que el Dockerfile copie archivos desde `frontend_dashboard/build/`
+2. Confirma que `index.html` existe en `/app/backend_gastos/static/`
+3. Revisa logs del build para errores de compilación de SvelteKit
 
 ### API No Responde
 **Síntomas**: 500 errors o timeouts

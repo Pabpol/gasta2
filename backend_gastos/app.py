@@ -864,11 +864,11 @@ async def update_sharing(update: ShareUpdate):
         gasto = storage.get(update.gasto_id)
         if not gasto:
             raise HTTPException(status_code=404, detail="Expense not found")
-        
+
         # Update sharing info
         monto_total = float(gasto["monto_clp"])
         porcentaje = update.porcentaje_compartido
-        
+
         gasto.update({
             "compartido_con": update.compartido_con,
             "porcentaje_compartido": porcentaje,
@@ -876,10 +876,10 @@ async def update_sharing(update: ShareUpdate):
             "monto_tu_parte": monto_total * ((100 - porcentaje) / 100),
             "settlement_status": "pending" if porcentaje > 0 else ""
         })
-        
+
         storage.upsert_row(gasto)
         storage.sync_excel()
-        
+
         return {
             "success": True,
             "gasto": gasto
@@ -887,6 +887,64 @@ async def update_sharing(update: ShareUpdate):
     except Exception as e:
         logger.error(f"Error updating sharing: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/gasto/{gasto_id}")
+async def delete_expense(gasto_id: str, request: Request):
+    """Delete an expense by ID"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Validate gasto_id format
+        if not gasto_id or len(gasto_id) < 10:
+            raise HTTPException(status_code=400, detail="Invalid expense ID format")
+
+        # Check if expense exists
+        existing_gasto = storage.get(gasto_id)
+        if not existing_gasto:
+            raise HTTPException(status_code=404, detail="Expense not found")
+
+        # Log deletion attempt
+        request_logger.info("Deleting expense", extra={
+            "expense_id": gasto_id,
+            "amount": existing_gasto.get("monto_clp", 0),
+            "description": existing_gasto.get("descripcion", "")[:50]
+        })
+
+        # Delete the expense
+        success = storage.delete_row(gasto_id)
+
+        if success:
+            # Log successful deletion
+            log_business_event(request_logger, "expense_deleted", {
+                "expense_id": gasto_id,
+                "amount": existing_gasto.get("monto_clp", 0),
+                "category": existing_gasto.get("categoria", "")
+            })
+
+            return {
+                "success": True,
+                "message": "Expense deleted successfully",
+                "deleted_expense": {
+                    "id": gasto_id,
+                    "descripcion": existing_gasto.get("descripcion", ""),
+                    "monto_clp": existing_gasto.get("monto_clp", 0),
+                    "categoria": existing_gasto.get("categoria", "")
+                }
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete expense")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        request_logger.error("Unexpected error during expense deletion", exc_info=True, extra={
+            "expense_id": gasto_id
+        })
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "An unexpected error occurred while deleting the expense.",
+            details={"expense_id": gasto_id, "original_error": str(e)}
+        )
 
 @app.post("/telegram/webhook")
 async def telegram_webhook(update: Dict[str, Any], request: Request):
