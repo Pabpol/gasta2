@@ -37,7 +37,10 @@ RUN cd frontend_dashboard && \
 
 # Copiar archivos del frontend construido al directorio estático del backend
 RUN rm -rf backend_gastos/static/* && \
-    cp -r frontend_dashboard/.svelte-kit/output/client/* backend_gastos/static/
+    cp -r frontend_dashboard/.svelte-kit/output/client/* backend_gastos/static/ && \
+    mkdir -p backend_gastos/static/_app && \
+    cp -r frontend_dashboard/.svelte-kit/output/client/_app/* backend_gastos/static/_app/ && \
+    cp frontend_dashboard/.svelte-kit/output/client/index.html backend_gastos/static/ 2>/dev/null || true
 
 # Exponer puerto (Railway lo asigna automáticamente)
 EXPOSE 8000
