@@ -1167,9 +1167,22 @@ async def get_backup_statistics(request: Request):
 # Serve static files in production (when frontend is built)
 # This needs to be at the end to avoid capturing API routes
 frontend_static = Path(__file__).parent / "static"
-if frontend_static.exists() and any(frontend_static.iterdir()):
-    app.mount("/static", StaticFiles(directory=str(frontend_static / "_app")), name="static") 
-    app.mount("/", StaticFiles(directory=str(frontend_static), html=True), name="frontend")
+logger.info(f"Checking frontend static directory: {frontend_static}")
+logger.info(f"Frontend static directory exists: {frontend_static.exists()}")
+
+if frontend_static.exists():
+    static_files = list(frontend_static.iterdir())
+    logger.info(f"Frontend static directory contents: {[f.name for f in static_files]}")
+
+    if static_files:
+        logger.info("Mounting frontend static files")
+        app.mount("/static", StaticFiles(directory=str(frontend_static / "_app")), name="static")
+        app.mount("/", StaticFiles(directory=str(frontend_static), html=True), name="frontend")
+        logger.info("Frontend static files mounted successfully")
+    else:
+        logger.warning("Frontend static directory exists but is empty")
+else:
+    logger.warning("Frontend static directory does not exist")
 
 if __name__ == "__main__":
     import uvicorn
