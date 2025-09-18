@@ -37,12 +37,8 @@ RUN cd frontend_dashboard && \
 
 # Copiar archivos del frontend construido al directorio estático del backend
 RUN rm -rf backend_gastos/static/* && \
-    echo "=== SVELTE BUILD OUTPUT STRUCTURE ===" && \
-    find frontend_dashboard/.svelte-kit/output/client/ -name "index.html" -o -name "*.js" -o -name "*.css" | head -10 && \
-    echo "=== COPYING ALL FILES ===" && \
-    cp -r frontend_dashboard/.svelte-kit/output/client/* backend_gastos/static/ 2>/dev/null || true && \
-    echo "=== SPECIFICALLY COPYING INDEX.HTML ===" && \
-    cp frontend_dashboard/.svelte-kit/output/client/index.html backend_gastos/static/index.html 2>/dev/null || echo "Failed to copy index.html" && \
+    echo "=== COPYING FROM CORRECT BUILD DIRECTORY ===" && \
+    cp -r frontend_dashboard/build/* backend_gastos/static/ 2>/dev/null || true && \
     echo "=== FINAL STATIC DIRECTORY CONTENTS ===" && \
     ls -la backend_gastos/static/ && \
     echo "=== VERIFYING INDEX.HTML EXISTS ===" && \
