@@ -3,9 +3,12 @@
 
 FROM python:3.11-slim
 
-# Instalar dependencias del sistema necesarias
+# Instalar dependencias del sistema necesarias (incluyendo Node.js)
 RUN apt-get update && apt-get install -y \
     build-essential \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Crear directorio de trabajo
@@ -24,12 +27,17 @@ COPY . .
 # Crear directorios necesarios para datos
 RUN mkdir -p backend_gastos/data backend_gastos/models
 
+# Construir frontend para producción
+RUN cd frontend_dashboard && \
+    npm ci && \
+    npm run build
+
+# Copiar archivos del frontend construido al directorio estático del backend
+RUN rm -rf backend_gastos/static/* && \
+    cp -r frontend_dashboard/.svelte-kit/output/client/* backend_gastos/static/
+
 # Exponer puerto (Railway lo asigna automáticamente)
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/api/health || exit 1
-
-# Comando de inicio directo y simple
-CMD sh -c "PORT=\${PORT:-8000} && echo \"Starting on port \$PORT\" && uvicorn backend_gastos.app:app --host 0.0.0.0 --port \$PORT"
+# Comando de inicio simple
+CMD ["uvicorn", "backend_gastos.app:app", "--host", "0.0.0.0", "--port", "8000"]
