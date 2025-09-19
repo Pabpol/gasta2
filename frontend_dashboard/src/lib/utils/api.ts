@@ -85,6 +85,43 @@ export interface CreateBudgetRequest {
     presupuesto_mensual: number;
 }
 
+// Recurring Expenses Types
+export interface RecurringExpense {
+    id: string;
+    descripcion: string;
+    monto_clp: number;
+    categoria: string;
+    medio: string;
+    is_recurring: boolean;
+    recurring_frequency: string;
+    recurring_day: number;
+    recurring_end_date?: string;
+    recurring_next_date: string;
+    fecha: string;
+    fuente: string;
+    estado: string;
+}
+
+export interface CreateRecurringExpenseRequest {
+    descripcion: string;
+    monto_clp: number;
+    categoria: string;
+    medio: string;
+    recurring_frequency: string;
+    recurring_day: number;
+    recurring_end_date?: string;
+}
+
+export interface UpdateRecurringExpenseRequest {
+    descripcion?: string;
+    monto_clp?: number;
+    categoria?: string;
+    medio?: string;
+    recurring_frequency?: string;
+    recurring_day?: number;
+    recurring_end_date?: string;
+}
+
 // API functions
 export const expensesApi = {
     // Get all expenses
@@ -160,6 +197,37 @@ export const budgetApi = {
     // Delete budget
     delete: async (categoria: string): Promise<void> => {
         await api.delete(`/api/presupuesto/${categoria}`);
+    },
+};
+
+export const recurringExpensesApi = {
+    // Get all recurring expenses
+    getAll: async (): Promise<RecurringExpense[]> => {
+        const response = await api.get('/api/recurring-expenses');
+        return response.data.recurring_expenses || [];
+    },
+
+    // Create recurring expense
+    create: async (recurringExpense: CreateRecurringExpenseRequest): Promise<RecurringExpense> => {
+        const response = await api.post('/api/recurring-expenses', recurringExpense);
+        return response.data.recurring_expense;
+    },
+
+    // Update recurring expense
+    update: async (id: string, updates: UpdateRecurringExpenseRequest): Promise<RecurringExpense> => {
+        const response = await api.put(`/api/recurring-expenses/${id}`, updates);
+        return response.data.recurring_expense;
+    },
+
+    // Delete recurring expense
+    delete: async (id: string): Promise<void> => {
+        await api.delete(`/api/recurring-expenses/${id}`);
+    },
+
+    // Generate recurring expenses manually
+    generate: async (): Promise<{ generated_count: number }> => {
+        const response = await api.post('/api/recurring-expenses/generate');
+        return response.data;
     },
 };
 

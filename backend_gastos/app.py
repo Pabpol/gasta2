@@ -19,6 +19,12 @@ from core import storage
 from core.categorize import Categorizer
 from core import reconcile
 from core.paths import DATA_DIR
+from core.storage import (
+    create_recurring_expense, get_recurring_templates,
+    generate_recurring_expenses, update_recurring_template,
+    delete_recurring_template
+)
+from core.scheduler import start_scheduler, stop_scheduler
 from core.errors import (
     ExpenseError, ValidationError, NotFoundError, ExternalServiceError, SystemError, ErrorCode,
     invalid_input_error, expense_not_found_error, telegram_error, storage_error, categorization_error,
@@ -69,6 +75,13 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize categorizer: {e}")
     categorizer = None
+
+# Initialize recurring expense scheduler
+try:
+    start_scheduler()
+    logger.info("Recurring expense scheduler started successfully")
+except Exception as e:
+    logger.error(f"Failed to start recurring expense scheduler: {e}")
 
 # Pydantic models with validation
 class GastoIn(BaseModel):
@@ -142,6 +155,37 @@ class ShareUpdate(BaseModel):
     def validate_porcentaje(cls, v):
         if not (0 <= v <= 100):
             raise ValueError('Percentage must be between 0 and 100')
+        return v
+
+# Recurring Expenses Models
+class RecurringExpenseCreate(BaseModel):
+    descripcion: str = Field(..., min_length=1, max_length=200, description="Recurring expense description")
+    monto_clp: float = Field(..., gt=0, le=100000000, description="Amount in CLP (must be positive)")
+    categoria: str = Field(..., min_length=1, max_length=50, description="Category")
+    medio: str = Field("TC", description="Payment method")
+    recurring_frequency: str = Field("monthly", description="Frequency: daily, weekly, monthly")
+    recurring_day: int = Field(1, ge=1, le=31, description="Day of month/week for recurrence")
+    recurring_end_date: Optional[str] = Field(None, description="End date for recurrence (optional)")
+
+    @validator('recurring_frequency')
+    def validate_frequency(cls, v):
+        if v not in ['daily', 'weekly', 'monthly']:
+            raise ValueError('Frequency must be daily, weekly, or monthly')
+        return v
+
+class RecurringExpenseUpdate(BaseModel):
+    descripcion: Optional[str] = Field(None, min_length=1, max_length=200)
+    monto_clp: Optional[float] = Field(None, gt=0, le=100000000)
+    categoria: Optional[str] = Field(None, min_length=1, max_length=50)
+    medio: Optional[str] = Field(None)
+    recurring_frequency: Optional[str] = Field(None)
+    recurring_day: Optional[int] = Field(None, ge=1, le=31)
+    recurring_end_date: Optional[str] = Field(None)
+
+    @validator('recurring_frequency')
+    def validate_frequency(cls, v):
+        if v is not None and v not in ['daily', 'weekly', 'monthly']:
+            raise ValueError('Frequency must be daily, weekly, or monthly')
         return v
 
 # API Endpoints
@@ -1303,6 +1347,212 @@ async def get_backup_statistics(request: Request):
             details={"error": str(e)}
         )
 
+# Recurring Expenses Endpoints
+
+@app.post("/api/recurring-expenses")
+async def create_recurring_expense_endpoint(
+    recurring_data: RecurringExpenseCreate,
+    request: Request
+):
+    """Create a new recurring expense template"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Convert to dict and add metadata
+        expense_dict = recurring_data.dict()
+        expense_dict["fecha"] = datetime.now().isoformat()
+        expense_dict["fuente"] = "manual"
+        expense_dict["estado"] = "categorizado"
+        expense_dict["tipo"] = "recurring_template"
+        expense_dict["moneda"] = "CLP"
+
+        # Create recurring expense
+        created_expense = create_recurring_expense(expense_dict)
+
+        request_logger.info("Recurring expense created", extra={
+            "template_id": created_expense["id"],
+            "amount": recurring_data.monto_clp,
+            "frequency": recurring_data.recurring_frequency,
+            "description": recurring_data.descripcion[:50]
+        })
+
+        log_business_event(request_logger, "recurring_expense_created", {
+            "template_id": created_expense["id"],
+            "amount": recurring_data.monto_clp,
+            "frequency": recurring_data.recurring_frequency
+        })
+
+        return {
+            "success": True,
+            "message": "Recurring expense created successfully",
+            "recurring_expense": created_expense
+        }
+
+    except Exception as e:
+        request_logger.error("Error creating recurring expense", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to create recurring expense.",
+            details={"original_error": str(e)}
+        )
+
+@app.get("/api/recurring-expenses")
+async def get_recurring_expenses(request: Request):
+    """Get all recurring expense templates"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        templates = get_recurring_templates()
+
+        request_logger.info("Recurring expenses retrieved", extra={
+            "template_count": len(templates)
+        })
+
+        return {
+            "success": True,
+            "recurring_expenses": templates,
+            "count": len(templates)
+        }
+
+    except Exception as e:
+        request_logger.error("Error retrieving recurring expenses", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to retrieve recurring expenses.",
+            details={"error": str(e)}
+        )
+
+@app.put("/api/recurring-expenses/{template_id}")
+async def update_recurring_expense_endpoint(
+    template_id: str,
+    updates: RecurringExpenseUpdate,
+    request: Request
+):
+    """Update a recurring expense template"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Validate template exists
+        existing_template = storage.get(template_id)
+        if not existing_template or not existing_template.get("is_recurring"):
+            raise HTTPException(status_code=404, detail="Recurring expense template not found")
+
+        # Update template
+        update_dict = {k: v for k, v in updates.dict().items() if v is not None}
+        success = update_recurring_template(template_id, update_dict)
+
+        if success:
+            updated_template = storage.get(template_id)
+
+            request_logger.info("Recurring expense updated", extra={
+                "template_id": template_id,
+                "updated_fields": list(update_dict.keys())
+            })
+
+            log_business_event(request_logger, "recurring_expense_updated", {
+                "template_id": template_id,
+                "updated_fields": list(update_dict.keys())
+            })
+
+            return {
+                "success": True,
+                "message": "Recurring expense updated successfully",
+                "recurring_expense": updated_template
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update recurring expense")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        request_logger.error("Error updating recurring expense", exc_info=True, extra={
+            "template_id": template_id
+        })
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to update recurring expense.",
+            details={"template_id": template_id, "original_error": str(e)}
+        )
+
+@app.delete("/api/recurring-expenses/{template_id}")
+async def delete_recurring_expense_endpoint(template_id: str, request: Request):
+    """Delete a recurring expense template"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Validate template exists
+        existing_template = storage.get(template_id)
+        if not existing_template or not existing_template.get("is_recurring"):
+            raise HTTPException(status_code=404, detail="Recurring expense template not found")
+
+        # Delete template
+        success = delete_recurring_template(template_id)
+
+        if success:
+            request_logger.warning("Recurring expense deleted", extra={
+                "template_id": template_id,
+                "description": existing_template.get("descripcion", "")
+            })
+
+            log_business_event(request_logger, "recurring_expense_deleted", {
+                "template_id": template_id,
+                "description": existing_template.get("descripcion", "")
+            })
+
+            return {
+                "success": True,
+                "message": "Recurring expense deleted successfully",
+                "deleted_template": {
+                    "id": template_id,
+                    "descripcion": existing_template.get("descripcion", ""),
+                    "monto_clp": existing_template.get("monto_clp", 0)
+                }
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete recurring expense")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        request_logger.error("Error deleting recurring expense", exc_info=True, extra={
+            "template_id": template_id
+        })
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to delete recurring expense.",
+            details={"template_id": template_id, "original_error": str(e)}
+        )
+
+@app.post("/api/recurring-expenses/generate")
+async def generate_recurring_expenses_endpoint(request: Request):
+    """Manually trigger generation of recurring expenses"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        generated_count = generate_recurring_expenses()
+
+        request_logger.info("Recurring expenses generated", extra={
+            "generated_count": generated_count
+        })
+
+        log_business_event(request_logger, "recurring_expenses_generated", {
+            "generated_count": generated_count
+        })
+
+        return {
+            "success": True,
+            "message": f"Generated {generated_count} recurring expenses",
+            "generated_count": generated_count
+        }
+
+    except Exception as e:
+        request_logger.error("Error generating recurring expenses", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to generate recurring expenses.",
+            details={"error": str(e)}
+        )
+
 # Serve static files in production (when frontend is built)
 # This needs to be at the end to avoid capturing API routes
 frontend_static = Path(__file__).parent / "static"
@@ -1334,6 +1584,45 @@ if frontend_static.exists():
         logger.warning("Frontend static directory exists but is empty")
 else:
     logger.warning("Frontend static directory does not exist")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Shutdown event to clean up resources"""
+    try:
+        stop_scheduler()
+        logger.info("Recurring expense scheduler stopped on shutdown")
+    except Exception as e:
+        logger.error(f"Error stopping scheduler on shutdown: {e}")
+
+@app.get("/api/scheduler/status")
+async def get_scheduler_status(request: Request):
+    """Get the status of the recurring expense scheduler"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        from core.scheduler import scheduler
+
+        status = {
+            "running": scheduler.running,
+            "check_interval_seconds": scheduler.check_interval,
+            "last_run": scheduler.last_run.isoformat() if scheduler.last_run else None,
+            "next_check_seconds": max(0, scheduler.check_interval - (datetime.now() - (scheduler.last_run or datetime.min)).total_seconds()) if scheduler.last_run else scheduler.check_interval
+        }
+
+        request_logger.info("Scheduler status retrieved", extra=status)
+
+        return {
+            "success": True,
+            "scheduler_status": status
+        }
+
+    except Exception as e:
+        request_logger.error("Error retrieving scheduler status", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to retrieve scheduler status.",
+            details={"error": str(e)}
+        )
 
 if __name__ == "__main__":
     import uvicorn
