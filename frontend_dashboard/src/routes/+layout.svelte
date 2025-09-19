@@ -18,6 +18,7 @@
 		{ href: '/ingresos', label: 'Ingresos', icon: '💰' },
 		{ href: '/presupuestos', label: 'Presupuestos', icon: '🎯' },
 		{ href: '/gastos', label: 'Gastos', icon: '📝' },
+		{ href: '/gastos-recurrentes', label: 'Gastos Recurrentes', icon: '🔄' },
 		{ href: '/configuracion', label: 'Configuración', icon: '⚙️' }
 	];
 
