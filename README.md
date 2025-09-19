@@ -31,6 +31,10 @@ gasta2/
 - 📈 **Visualización de Datos** - Gráficos y análisis de gastos
 - 🔄 **Sincronización Automática** - Entre Parquet y Excel
 - 🗑️ **Gestión Completa de Gastos** - Crear, leer, actualizar y eliminar gastos
+- 💳 **Sistema de Compras en Cuotas** - Gestión completa de compras a plazos con seguimiento automático
+- 🔄 **Gastos Recurrentes** - Automatización de gastos periódicos (mensuales, semanales)
+- 📅 **Recordatorios Automáticos** - Notificaciones de pagos próximos
+- 📊 **Reportes de Deuda** - Seguimiento de saldo pendiente en compras a plazos
 
 ## 🚀 Deployment
 
@@ -91,22 +95,85 @@ curl https://tu-app.railway.app/api/health
 
 Ver [DEPLOY.md](DEPLOY.md) para guía completa y troubleshooting.
 
+## 💳 Sistema de Compras en Cuotas
+
+Gestiona automáticamente tus compras a plazos con seguimiento completo:
+
+### Características Principales
+- 📅 **Seguimiento Automático** - Genera gastos mensuales automáticamente
+- 🔢 **Cálculo Inteligente** - Calcula cuotas restantes para compras históricas
+- 📊 **Dashboard Integrado** - Visualiza deudas pendientes en el dashboard principal
+- 🧹 **Limpieza Automática** - Elimina duplicados y gastos de meses anteriores
+- 📱 **Recordatorios** - Notificaciones de pagos próximos vía Telegram
+
+### API Endpoints de Compras en Cuotas
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `GET` | `/api/installment-purchases` | Obtener todas las compras en cuotas |
+| `POST` | `/api/installment-purchases` | Crear nueva compra en cuotas |
+| `GET` | `/api/installment-purchases/{id}` | Obtener compra específica |
+| `PUT` | `/api/installment-purchases/{id}` | Actualizar compra en cuotas |
+| `DELETE` | `/api/installment-purchases/{id}` | Eliminar compra en cuotas |
+| `POST` | `/api/installment-purchases/{id}/payments` | Registrar pago de cuota |
+| `GET` | `/api/installment-purchases/upcoming` | Próximos pagos (30 días) |
+| `GET` | `/api/installment-purchases/summary` | Resumen de deudas |
+| `POST` | `/api/installment-purchases/generate-expenses` | Generar gastos del mes actual |
+| `POST` | `/api/installment-purchases/cleanup-duplicates` | Limpiar duplicados |
+
+### Ejemplo de Uso
+
+```bash
+# Crear compra en cuotas
+curl -X POST https://tu-app.railway.app/api/installment-purchases \
+  -H "Content-Type: application/json" \
+  -d '{
+    "descripcion": "Laptop Gaming",
+    "installment_total_amount": 1200000,
+    "installment_total_installments": 12,
+    "categoria": "tecnologia",
+    "medio": "TC",
+    "installment_interest_rate": 5.0,
+    "installment_first_payment_date": "2025-09-15",
+    "installment_payment_frequency": "monthly"
+  }'
+
+# Registrar pago histórico
+curl -X POST https://tu-app.railway.app/api/installment-purchases/{id}/historical-payments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "installment_number": 2,
+    "payment_amount": 100000,
+    "payment_date": "2025-08-15"
+  }'
+```
+
 ## 🔌 API Endpoints
 
 ### Gastos (Expenses)
 
 | Método | Endpoint | Descripción |
 |--------|----------|-------------|
-| `GET` | `/api/gastos` | Obtener todos los gastos |
+| `GET` | `/api/gastos` | Obtener todos los gastos (excluye registros de compras) |
 | `POST` | `/api/gasto` | Crear nuevo gasto |
 | `DELETE` | `/api/gasto/{id}` | **🆕** Eliminar gasto por ID |
 | `PUT` | `/api/gasto/{id}/categoria` | Actualizar categoría de gasto |
+
+### Gastos Recurrentes
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `GET` | `/api/recurring-expenses` | Obtener todos los gastos recurrentes |
+| `POST` | `/api/recurring-expenses` | Crear gasto recurrente |
+| `PUT` | `/api/recurring-expenses/{id}` | Actualizar gasto recurrente |
+| `DELETE` | `/api/recurring-expenses/{id}` | Eliminar gasto recurrente |
+| `POST` | `/api/recurring-expenses/generate` | Generar gastos recurrentes del período |
 
 ### Dashboard
 
 | Método | Endpoint | Descripción |
 |--------|----------|-------------|
-| `GET` | `/api/dashboard/summary` | Resumen general del dashboard |
+| `GET` | `/api/dashboard/summary` | Resumen general del dashboard (excluye compras en cuotas) |
 | `GET` | `/api/dashboard/categories` | Desglose por categorías |
 | `GET` | `/api/dashboard/trends` | Tendencias mensuales |
 
@@ -149,11 +216,23 @@ Ver [backend_gastos/MACRODROID_CONFIG.md](backend_gastos/MACRODROID_CONFIG.md) p
 
 ## 🎯 Roadmap Futuro
 
-### Frontend Web Dashboard 🖥️ ✅ IMPLEMENTADO
-- 📊 Visualización de gastos y tendencias
-- 🎛️ Configuración de categorías
-- 📈 Reportes y análisis
-- 💾 Migración a base de datos real (próximamente)
+### ✅ COMPLETADO - Funcionalidades Implementadas
+
+#### 🖥️ Frontend Web Dashboard
+- 📊 Visualización completa de gastos y tendencias
+- 🎛️ Configuración de categorías y subcategorías
+- 📈 Reportes y análisis avanzados
+- 💳 **Sistema de Compras en Cuotas** - Gestión completa con UI dedicada
+- 🔄 **Gastos Recurrentes** - Automatización con scheduler integrado
+- 📱 Interfaz responsive y moderna con SvelteKit
+
+#### 🔧 Backend Avanzado
+- 💳 **API Completa de Compras en Cuotas** - CRUD, pagos, reportes
+- 🔄 **Sistema de Gastos Recurrentes** - Templates y generación automática
+- 📅 **Scheduler Automático** - Generación de gastos recurrentes e cuotas
+- 🧹 **Limpieza Automática** - Eliminación de duplicados y datos obsoletos
+- 📊 **Reportes de Deuda** - Seguimiento de saldos pendientes
+- 🔒 **Validación Avanzada** - Manejo robusto de errores y edge cases
 
 ### App Mobile 📱
 - 📷 Escaneo de recibos con OCR
