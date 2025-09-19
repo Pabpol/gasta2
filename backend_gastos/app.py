@@ -22,7 +22,13 @@ from core.paths import DATA_DIR
 from core.storage import (
     create_recurring_expense, get_recurring_templates,
     generate_recurring_expenses, update_recurring_template,
-    delete_recurring_template
+    delete_recurring_template,
+    # Installment purchases
+    create_installment_purchase, get_installment_purchases,
+    record_installment_payment, get_upcoming_installment_payments,
+    get_installment_purchase_summary, update_installment_purchase,
+    delete_installment_purchase, generate_installment_expenses,
+    record_historical_installment_payment, cleanup_duplicate_installment_expenses
 )
 from core.scheduler import start_scheduler, stop_scheduler
 from core.errors import (
@@ -186,6 +192,72 @@ class RecurringExpenseUpdate(BaseModel):
     def validate_frequency(cls, v):
         if v is not None and v not in ['daily', 'weekly', 'monthly']:
             raise ValueError('Frequency must be daily, weekly, or monthly')
+        return v
+
+# Installment Purchases Models
+class InstallmentPurchaseCreate(BaseModel):
+    descripcion: str = Field(..., min_length=1, max_length=200, description="Purchase description")
+    installment_total_amount: float = Field(..., gt=0, le=100000000, description="Total purchase amount")
+    installment_total_installments: int = Field(..., ge=1, le=360, description="Total number of installments")
+    categoria: str = Field("deudas", description="Category")
+    medio: str = Field("TC", description="Payment method")
+    installment_interest_rate: Optional[float] = Field(0.0, ge=0, le=100, description="Interest rate percentage")
+    installment_first_payment_date: str = Field(..., description="First payment date (YYYY-MM-DD)")
+    installment_payment_frequency: str = Field("monthly", description="Payment frequency")
+
+    @validator('installment_payment_frequency')
+    def validate_payment_frequency(cls, v):
+        if v not in ['weekly', 'monthly']:
+            raise ValueError('Payment frequency must be weekly or monthly')
+        return v
+
+    @validator('installment_first_payment_date')
+    def validate_first_payment_date(cls, v):
+        try:
+            datetime.fromisoformat(v)
+            return v
+        except ValueError:
+            raise ValueError('Invalid date format. Use YYYY-MM-DD')
+
+class InstallmentPaymentRecord(BaseModel):
+    purchase_id: str = Field(..., min_length=1, max_length=50, description="Installment purchase ID")
+    payment_amount: float = Field(..., gt=0, description="Payment amount")
+    payment_date: Optional[str] = Field(None, description="Payment date (optional, defaults to today)")
+
+    @validator('payment_date')
+    def validate_payment_date(cls, v):
+        if v is not None:
+            try:
+                datetime.fromisoformat(v)
+                return v
+            except ValueError:
+                raise ValueError('Invalid date format. Use YYYY-MM-DD')
+        return v
+
+class InstallmentPurchaseUpdate(BaseModel):
+    descripcion: Optional[str] = Field(None, min_length=1, max_length=200)
+    installment_total_amount: Optional[float] = Field(None, gt=0, le=100000000)
+    installment_total_installments: Optional[int] = Field(None, ge=1, le=360)
+    categoria: Optional[str] = Field(None)
+    medio: Optional[str] = Field(None)
+    installment_interest_rate: Optional[float] = Field(None, ge=0, le=100)
+    installment_first_payment_date: Optional[str] = Field(None)
+    installment_payment_frequency: Optional[str] = Field(None)
+
+    @validator('installment_payment_frequency')
+    def validate_payment_frequency(cls, v):
+        if v is not None and v not in ['weekly', 'monthly']:
+            raise ValueError('Payment frequency must be weekly or monthly')
+        return v
+
+    @validator('installment_first_payment_date')
+    def validate_first_payment_date(cls, v):
+        if v is not None:
+            try:
+                datetime.fromisoformat(v)
+                return v
+            except ValueError:
+                raise ValueError('Invalid date format. Use YYYY-MM-DD')
         return v
 
 # API Endpoints
@@ -490,15 +562,18 @@ async def create_ingreso(ingreso: IngresoIn, background_tasks: BackgroundTasks):
 # Dashboard endpoints for frontend
 @app.get("/api/gastos")
 async def get_all_expenses():
-    """Get all expenses (excluding incomes) for dashboard"""
+    """Get all expenses (excluding incomes and installment purchases) for dashboard"""
     try:
         df = storage.get_all_data()
         if df.empty:
             return []
-        
-        # Filter only expenses (exclude transfer_in which are incomes)
-        expenses_df = df[df['tipo'] != 'transfer_in']
-        
+
+        # Filter only expenses (exclude transfer_in which are incomes and installment_purchase records)
+        expenses_df = df[
+            (df['tipo'] != 'transfer_in') &
+            (df['tipo'] != 'installment_purchase')  # Exclude purchase records, only show individual installments
+        ]
+
         # Convert to list of dicts
         expenses = expenses_df.to_dict('records')
         return expenses
@@ -508,16 +583,20 @@ async def get_all_expenses():
 
 @app.get("/api/gastos/month/{year}/{month}")
 async def get_expenses_by_month(year: int, month: int):
-    """Get expenses for specific month"""
+    """Get expenses for specific month (excluding installment purchases)"""
     try:
         df = storage.get_all_data()
         if df.empty:
             return []
-        
-        # Filter by month
+
+        # Filter by month and exclude installment purchases
         df['fecha'] = pd.to_datetime(df['fecha'])
-        filtered = df[(df['fecha'].dt.year == year) & (df['fecha'].dt.month == month)]
-        
+        filtered = df[
+            (df['fecha'].dt.year == year) &
+            (df['fecha'].dt.month == month) &
+            (df['tipo'] != 'installment_purchase')  # Exclude purchase records, only show individual installments
+        ]
+
         return filtered.to_dict('records')
     except Exception as e:
         logger.error(f"Error getting expenses by month: {e}")
@@ -624,8 +703,12 @@ async def get_dashboard_summary():
         # Filter data for current period
         df['fecha'] = pd.to_datetime(df['fecha'])
         current_period = df[(df['fecha'] >= period_start) & (df['fecha'] <= period_end)]
-        
-        expenses = current_period[current_period['tipo'] != 'transfer_in']
+
+        # Exclude installment purchases from expense calculations (only count individual installments)
+        expenses = current_period[
+            (current_period['tipo'] != 'transfer_in') &
+            (current_period['tipo'] != 'installment_purchase')
+        ]
         income = current_period[current_period['tipo'] == 'transfer_in']
         
         total_expenses = expenses['monto_tu_parte'].sum() if not expenses.empty else 0
@@ -673,8 +756,11 @@ async def get_category_breakdown(year: Optional[int] = None, month: Optional[int
             period_end = period_info["period_end"]
             df = df[(df['fecha'] >= period_start) & (df['fecha'] <= period_end)]
         
-        # Filter expenses only
-        expenses = df[df['tipo'] != 'transfer_in']
+        # Filter expenses only (exclude installment purchases)
+        expenses = df[
+            (df['tipo'] != 'transfer_in') &
+            (df['tipo'] != 'installment_purchase')
+        ]
         
         # Group by category
         if expenses.empty:
@@ -705,8 +791,11 @@ async def get_monthly_trends(months: Optional[int] = 6):
         # Convert to datetime
         df['fecha'] = pd.to_datetime(df['fecha'])
         
-        # Separate expenses and incomes
-        expenses = df[df['tipo'] != 'transfer_in']
+        # Separate expenses and incomes (exclude installment purchases)
+        expenses = df[
+            (df['tipo'] != 'transfer_in') &
+            (df['tipo'] != 'installment_purchase')
+        ]
         incomes = df[df['tipo'] == 'transfer_in']
         
         # Group expenses by year-month
@@ -858,12 +947,16 @@ async def get_stats():
         df = storage.get_all_data()
         general_stats = {
             "total_transactions": len(df),
-            "total_expenses": len(df[df["tipo"] != "transfer_in"]),
+            "total_expenses": len(df[
+                (df["tipo"] != "transfer_in") &
+                (df["tipo"] != "installment_purchase")
+            ]),
             "total_income": len(df[df["tipo"] == "transfer_in"]),
             "categories_count": df["categoria"].nunique() if not df.empty else 0,
             "this_month_expenses": len(df[
                 (df["fecha"] >= datetime.now().replace(day=1).isoformat()) &
-                (df["tipo"] != "transfer_in")
+                (df["tipo"] != "transfer_in") &
+                (df["tipo"] != "installment_purchase")
             ]) if not df.empty else 0
         }
         
@@ -1551,6 +1644,427 @@ async def generate_recurring_expenses_endpoint(request: Request):
             ErrorCode.INTERNAL_ERROR,
             "Failed to generate recurring expenses.",
             details={"error": str(e)}
+        )
+
+# Installment Purchases Endpoints
+
+@app.post("/api/installment-purchases")
+async def create_installment_purchase_endpoint(
+    purchase_data: InstallmentPurchaseCreate,
+    request: Request
+):
+    """Create a new installment purchase"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Convert to dict and add metadata
+        purchase_dict = purchase_data.dict()
+        purchase_dict["fecha"] = datetime.now().isoformat()
+        purchase_dict["fuente"] = "manual"
+        purchase_dict["estado"] = "categorizado"
+        purchase_dict["tipo"] = "installment_purchase"
+        purchase_dict["moneda"] = "CLP"
+
+        # Create installment purchase
+        created_purchase = create_installment_purchase(purchase_dict)
+
+        request_logger.info("Installment purchase created", extra={
+            "purchase_id": created_purchase["id"],
+            "total_amount": purchase_data.installment_total_amount,
+            "installments": purchase_data.installment_total_installments,
+            "description": purchase_data.descripcion[:50]
+        })
+
+        log_business_event(request_logger, "installment_purchase_created", {
+            "purchase_id": created_purchase["id"],
+            "total_amount": purchase_data.installment_total_amount,
+            "installments": purchase_data.installment_total_installments
+        })
+
+        return {
+            "success": True,
+            "message": "Installment purchase created successfully",
+            "installment_purchase": created_purchase
+        }
+
+    except Exception as e:
+        request_logger.error("Error creating installment purchase", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to create installment purchase.",
+            details={"original_error": str(e)}
+        )
+
+@app.get("/api/installment-purchases")
+async def get_installment_purchases_endpoint(request: Request):
+    """Get all installment purchases"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        purchases = get_installment_purchases()
+
+        request_logger.info("Installment purchases retrieved", extra={
+            "purchase_count": len(purchases)
+        })
+
+        return {
+            "success": True,
+            "installment_purchases": purchases,
+            "count": len(purchases)
+        }
+
+    except Exception as e:
+        request_logger.error("Error retrieving installment purchases", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to retrieve installment purchases.",
+            details={"error": str(e)}
+        )
+
+@app.post("/api/installment-purchases/{purchase_id}/payments")
+async def record_installment_payment_endpoint(
+    purchase_id: str,
+    payment_data: InstallmentPaymentRecord,
+    request: Request
+):
+    """Record a payment for an installment purchase"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Validate purchase exists
+        purchase = storage.get(purchase_id)
+        if not purchase or not purchase.get("is_installment"):
+            raise HTTPException(status_code=404, detail="Installment purchase not found")
+
+        # Record payment
+        success = record_installment_payment(
+            purchase_id,
+            payment_data.payment_amount,
+            payment_data.payment_date
+        )
+
+        if success:
+            request_logger.info("Installment payment recorded", extra={
+                "purchase_id": purchase_id,
+                "payment_amount": payment_data.payment_amount,
+                "payment_date": payment_data.payment_date
+            })
+
+            log_business_event(request_logger, "installment_payment_recorded", {
+                "purchase_id": purchase_id,
+                "payment_amount": payment_data.payment_amount
+            })
+
+            return {
+                "success": True,
+                "message": "Payment recorded successfully",
+                "payment_amount": payment_data.payment_amount
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to record payment")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        request_logger.error("Error recording installment payment", exc_info=True, extra={
+            "purchase_id": purchase_id
+        })
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to record installment payment.",
+            details={"purchase_id": purchase_id, "original_error": str(e)}
+        )
+
+@app.get("/api/installment-purchases/upcoming")
+async def get_upcoming_installment_payments_endpoint(
+    request: Request,
+    days_ahead: int = 30
+):
+    """Get upcoming installment payments"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        upcoming_payments = get_upcoming_installment_payments(days_ahead)
+
+        request_logger.info("Upcoming installment payments retrieved", extra={
+            "days_ahead": days_ahead,
+            "upcoming_count": len(upcoming_payments)
+        })
+
+        return {
+            "success": True,
+            "upcoming_payments": upcoming_payments,
+            "count": len(upcoming_payments),
+            "days_ahead": days_ahead
+        }
+
+    except Exception as e:
+        request_logger.error("Error retrieving upcoming payments", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to retrieve upcoming payments.",
+            details={"error": str(e)}
+        )
+
+@app.get("/api/installment-purchases/summary")
+async def get_installment_purchase_summary_endpoint(request: Request):
+    """Get installment purchases summary"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        summary = get_installment_purchase_summary()
+
+        request_logger.info("Installment purchases summary retrieved", extra={
+            "total_debt": summary.get("total_debt", 0),
+            "active_purchases": summary.get("active_purchases", 0)
+        })
+
+        return {
+            "success": True,
+            "summary": summary
+        }
+
+    except Exception as e:
+        request_logger.error("Error retrieving installment summary", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to retrieve installment summary.",
+            details={"error": str(e)}
+        )
+
+@app.put("/api/installment-purchases/{purchase_id}")
+async def update_installment_purchase_endpoint(
+    purchase_id: str,
+    updates: InstallmentPurchaseUpdate,
+    request: Request
+):
+    """Update an installment purchase"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Validate purchase exists
+        existing_purchase = storage.get(purchase_id)
+        if not existing_purchase or not existing_purchase.get("is_installment"):
+            raise HTTPException(status_code=404, detail="Installment purchase not found")
+
+        # Update purchase
+        update_dict = {k: v for k, v in updates.dict().items() if v is not None}
+        success = update_installment_purchase(purchase_id, update_dict)
+
+        if success:
+            updated_purchase = storage.get(purchase_id)
+
+            request_logger.info("Installment purchase updated", extra={
+                "purchase_id": purchase_id,
+                "updated_fields": list(update_dict.keys())
+            })
+
+            log_business_event(request_logger, "installment_purchase_updated", {
+                "purchase_id": purchase_id,
+                "updated_fields": list(update_dict.keys())
+            })
+
+            return {
+                "success": True,
+                "message": "Installment purchase updated successfully",
+                "installment_purchase": updated_purchase
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update installment purchase")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        request_logger.error("Error updating installment purchase", exc_info=True, extra={
+            "purchase_id": purchase_id
+        })
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to update installment purchase.",
+            details={"purchase_id": purchase_id, "original_error": str(e)}
+        )
+
+@app.delete("/api/installment-purchases/{purchase_id}")
+async def delete_installment_purchase_endpoint(purchase_id: str, request: Request):
+    """Delete an installment purchase"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Validate purchase exists
+        existing_purchase = storage.get(purchase_id)
+        if not existing_purchase or not existing_purchase.get("is_installment"):
+            raise HTTPException(status_code=404, detail="Installment purchase not found")
+
+        # Delete purchase
+        success = delete_installment_purchase(purchase_id)
+
+        if success:
+            request_logger.warning("Installment purchase deleted", extra={
+                "purchase_id": purchase_id,
+                "description": existing_purchase.get("descripcion", ""),
+                "remaining_balance": existing_purchase.get("installment_remaining_balance", 0)
+            })
+
+            log_business_event(request_logger, "installment_purchase_deleted", {
+                "purchase_id": purchase_id,
+                "description": existing_purchase.get("descripcion", ""),
+                "remaining_balance": existing_purchase.get("installment_remaining_balance", 0)
+            })
+
+            return {
+                "success": True,
+                "message": "Installment purchase deleted successfully",
+                "deleted_purchase": {
+                    "id": purchase_id,
+                    "descripcion": existing_purchase.get("descripcion", ""),
+                    "remaining_balance": existing_purchase.get("installment_remaining_balance", 0)
+                }
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete installment purchase")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        request_logger.error("Error deleting installment purchase", exc_info=True, extra={
+            "purchase_id": purchase_id
+        })
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to delete installment purchase.",
+            details={"purchase_id": purchase_id, "original_error": str(e)}
+        )
+
+@app.post("/api/installment-purchases/generate-expenses")
+async def generate_installment_expenses_endpoint(request: Request):
+    """Generate automatic expenses for current month installment payments"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        generated_count = generate_installment_expenses()
+
+        request_logger.info("Installment expenses generated", extra={
+            "generated_count": generated_count
+        })
+
+        log_business_event(request_logger, "installment_expenses_generated", {
+            "generated_count": generated_count
+        })
+
+        return {
+            "success": True,
+            "message": f"Generated {generated_count} current month installment expenses",
+            "generated_count": generated_count
+        }
+
+    except Exception as e:
+        request_logger.error("Error generating installment expenses", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to generate installment expenses.",
+            details={"error": str(e)}
+        )
+
+@app.post("/api/installment-purchases/cleanup-duplicates")
+async def cleanup_duplicate_installment_expenses_endpoint(request: Request):
+    """Clean up duplicate installment expenses from previous months"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        deleted_count = cleanup_duplicate_installment_expenses()
+
+        request_logger.info("Duplicate installment expenses cleaned up", extra={
+            "deleted_count": deleted_count
+        })
+
+        log_business_event(request_logger, "duplicate_installment_expenses_cleaned", {
+            "deleted_count": deleted_count
+        })
+
+        return {
+            "success": True,
+            "message": f"Cleaned up {deleted_count} duplicate installment expenses",
+            "deleted_count": deleted_count
+        }
+
+    except Exception as e:
+        request_logger.error("Error cleaning up duplicate installment expenses", exc_info=True)
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to clean up duplicate installment expenses.",
+            details={"error": str(e)}
+        )
+
+class HistoricalPaymentRecord(BaseModel):
+    installment_number: int = Field(..., ge=1, description="Installment number to record payment for")
+    payment_amount: float = Field(..., gt=0, description="Payment amount")
+    payment_date: str = Field(..., description="Payment date (YYYY-MM-DD)")
+
+    @validator('payment_date')
+    def validate_payment_date(cls, v):
+        try:
+            datetime.fromisoformat(v)
+            return v
+        except ValueError:
+            raise ValueError('Invalid date format. Use YYYY-MM-DD')
+
+@app.post("/api/installment-purchases/{purchase_id}/historical-payments")
+async def record_historical_installment_payment_endpoint(
+    purchase_id: str,
+    payment_data: HistoricalPaymentRecord,
+    request: Request
+):
+    """Record a historical payment for a specific installment number"""
+    request_logger = get_request_logger_from_request(request)
+
+    try:
+        # Validate purchase exists
+        purchase = storage.get(purchase_id)
+        if not purchase or not purchase.get("is_installment"):
+            raise HTTPException(status_code=404, detail="Installment purchase not found")
+
+        # Record historical payment
+        success = record_historical_installment_payment(
+            purchase_id,
+            payment_data.installment_number,
+            payment_data.payment_amount,
+            payment_data.payment_date
+        )
+
+        if success:
+            request_logger.info("Historical installment payment recorded", extra={
+                "purchase_id": purchase_id,
+                "installment_number": payment_data.installment_number,
+                "payment_amount": payment_data.payment_amount,
+                "payment_date": payment_data.payment_date
+            })
+
+            log_business_event(request_logger, "historical_installment_payment_recorded", {
+                "purchase_id": purchase_id,
+                "installment_number": payment_data.installment_number,
+                "payment_amount": payment_data.payment_amount
+            })
+
+            return {
+                "success": True,
+                "message": f"Payment for installment {payment_data.installment_number} recorded successfully",
+                "payment_amount": payment_data.payment_amount,
+                "installment_number": payment_data.installment_number
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to record historical payment")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        request_logger.error("Error recording historical installment payment", exc_info=True, extra={
+            "purchase_id": purchase_id,
+            "installment_number": payment_data.installment_number
+        })
+        raise SystemError(
+            ErrorCode.INTERNAL_ERROR,
+            "Failed to record historical installment payment.",
+            details={"purchase_id": purchase_id, "installment_number": payment_data.installment_number, "original_error": str(e)}
         )
 
 # Serve static files in production (when frontend is built)

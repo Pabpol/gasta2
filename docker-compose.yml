@@ -14,7 +14,6 @@ services:
       - "8000:8000"  # puerto_host:puerto_contenedor
     volumes:
       - ./backend_gastos:/app  # sincroniza código para desarrollo
-      - backend_data:/app/data  # volumen persistente para datos
     environment:
       - PYTHONPATH=/app
     networks:

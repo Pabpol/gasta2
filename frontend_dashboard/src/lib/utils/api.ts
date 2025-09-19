@@ -122,6 +122,73 @@ export interface UpdateRecurringExpenseRequest {
     recurring_end_date?: string;
 }
 
+// Installment Purchases Types
+export interface InstallmentPurchase {
+    id: string;
+    descripcion: string;
+    is_installment: boolean;
+    installment_total_amount: number;
+    installment_total_installments: number;
+    installment_paid_installments: number;
+    installment_installment_amount: number;
+    installment_interest_rate: number;
+    installment_first_payment_date: string;
+    installment_payment_frequency: string;
+    installment_remaining_balance: number;
+    categoria: string;
+    medio: string;
+    fecha: string;
+    fuente: string;
+    estado: string;
+}
+
+export interface CreateInstallmentPurchaseRequest {
+    descripcion: string;
+    installment_total_amount: number;
+    installment_total_installments: number;
+    categoria: string;
+    medio: string;
+    installment_interest_rate?: number;
+    installment_first_payment_date: string;
+    installment_payment_frequency: string;
+}
+
+export interface InstallmentPaymentRecordRequest {
+    purchase_id: string;
+    payment_amount: number;
+    payment_date?: string;
+}
+
+export interface UpdateInstallmentPurchaseRequest {
+    descripcion?: string;
+    installment_total_amount?: number;
+    installment_total_installments?: number;
+    categoria?: string;
+    medio?: string;
+    installment_interest_rate?: number;
+    installment_first_payment_date?: string;
+    installment_payment_frequency?: string;
+}
+
+export interface UpcomingInstallmentPayment {
+    purchase_id: string;
+    descripcion: string;
+    next_payment_date: string;
+    days_until_due: number;
+    installment_amount: number;
+    installment_number: number;
+    total_installments: number;
+    remaining_balance: number;
+}
+
+export interface InstallmentPurchaseSummary {
+    total_debt: number;
+    total_purchases: number;
+    active_purchases: number;
+    monthly_commitment: number;
+    upcoming_payments: UpcomingInstallmentPayment[];
+}
+
 // API functions
 export const expensesApi = {
     // Get all expenses
@@ -228,6 +295,49 @@ export const recurringExpensesApi = {
     generate: async (): Promise<{ generated_count: number }> => {
         const response = await api.post('/api/recurring-expenses/generate');
         return response.data;
+    },
+};
+
+export const installmentPurchasesApi = {
+    // Get all installment purchases
+    getAll: async (): Promise<InstallmentPurchase[]> => {
+        const response = await api.get('/api/installment-purchases');
+        return response.data.installment_purchases || [];
+    },
+
+    // Create installment purchase
+    create: async (purchase: CreateInstallmentPurchaseRequest): Promise<InstallmentPurchase> => {
+        const response = await api.post('/api/installment-purchases', purchase);
+        return response.data.installment_purchase;
+    },
+
+    // Update installment purchase
+    update: async (id: string, updates: UpdateInstallmentPurchaseRequest): Promise<InstallmentPurchase> => {
+        const response = await api.put(`/api/installment-purchases/${id}`, updates);
+        return response.data.installment_purchase;
+    },
+
+    // Delete installment purchase
+    delete: async (id: string): Promise<void> => {
+        await api.delete(`/api/installment-purchases/${id}`);
+    },
+
+    // Record payment
+    recordPayment: async (payment: InstallmentPaymentRecordRequest): Promise<{ payment_amount: number }> => {
+        const response = await api.post(`/api/installment-purchases/${payment.purchase_id}/payments`, payment);
+        return response.data;
+    },
+
+    // Get upcoming payments
+    getUpcoming: async (daysAhead: number = 30): Promise<UpcomingInstallmentPayment[]> => {
+        const response = await api.get(`/api/installment-purchases/upcoming?days_ahead=${daysAhead}`);
+        return response.data.upcoming_payments || [];
+    },
+
+    // Get summary
+    getSummary: async (): Promise<InstallmentPurchaseSummary> => {
+        const response = await api.get('/api/installment-purchases/summary');
+        return response.data.summary;
     },
 };
 

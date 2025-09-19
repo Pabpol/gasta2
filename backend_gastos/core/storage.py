@@ -23,7 +23,11 @@ SCHEMA_COLUMNS = [
     "tipo", "parent_id", "monto_tu_parte", "monto_tercero", "settlement_status",
     # Recurring expenses fields
     "is_recurring", "recurring_frequency", "recurring_day", "recurring_end_date",
-    "recurring_template_id", "recurring_next_date"
+    "recurring_template_id", "recurring_next_date",
+    # Installment purchases fields
+    "is_installment", "installment_total_amount", "installment_total_installments",
+    "installment_paid_installments", "installment_installment_amount", "installment_interest_rate",
+    "installment_first_payment_date", "installment_payment_frequency", "installment_remaining_balance"
 ]
 
 def _ensure_schema(df: pd.DataFrame) -> pd.DataFrame:
@@ -55,6 +59,16 @@ def _ensure_schema(df: pd.DataFrame) -> pd.DataFrame:
     df["monto_tercero"] = pd.to_numeric(df["monto_tercero"], errors="coerce").fillna(0.0)
     df["is_recurring"] = df["is_recurring"].astype(bool)
     df["recurring_day"] = pd.to_numeric(df["recurring_day"], errors="coerce").fillna(0).astype(int)
+
+    # Installment purchases fields
+    df["is_installment"] = df["is_installment"].astype(bool)
+    df["installment_total_amount"] = pd.to_numeric(df["installment_total_amount"], errors="coerce").fillna(0.0)
+    df["installment_total_installments"] = pd.to_numeric(df["installment_total_installments"], errors="coerce").fillna(0).astype(int)
+    df["installment_paid_installments"] = pd.to_numeric(df["installment_paid_installments"], errors="coerce").fillna(0).astype(int)
+    df["installment_installment_amount"] = pd.to_numeric(df["installment_installment_amount"], errors="coerce").fillna(0.0)
+    df["installment_interest_rate"] = pd.to_numeric(df["installment_interest_rate"], errors="coerce").fillna(0.0)
+    df["installment_first_payment_date"] = pd.to_datetime(df["installment_first_payment_date"], errors="coerce")
+    df["installment_remaining_balance"] = pd.to_numeric(df["installment_remaining_balance"], errors="coerce").fillna(0.0)
 
     return df
 
@@ -402,3 +416,369 @@ def delete_recurring_template(template_id: str) -> bool:
         # This could be a separate function if needed
 
     return success
+
+# Installment Purchases Functions
+
+def create_installment_purchase(purchase_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a new installment purchase"""
+    # Set installment flags
+    purchase_data["is_installment"] = True
+    purchase_data["tipo"] = "installment_purchase"
+    purchase_data["monto_clp"] = 0  # No es un gasto real, solo registro
+
+    # Calculate installment amount
+    total_amount = float(purchase_data.get("installment_total_amount", 0))
+    total_installments = int(purchase_data.get("installment_total_installments", 1))
+    interest_rate = float(purchase_data.get("installment_interest_rate", 0))
+    first_payment_date = pd.to_datetime(purchase_data.get("installment_first_payment_date"))
+
+    # Calculate installment amount with interest
+    if interest_rate > 0:
+        # Simple interest calculation
+        total_with_interest = total_amount * (1 + (interest_rate / 100))
+        installment_amount = total_with_interest / total_installments
+    else:
+        installment_amount = total_amount / total_installments
+
+    purchase_data["installment_installment_amount"] = installment_amount
+
+    # Calculate how many installments should have been paid by now (for historical purchases)
+    now = pd.Timestamp.now()
+    payment_frequency = purchase_data.get("installment_payment_frequency", "monthly")
+
+    if not pd.isna(first_payment_date) and first_payment_date < now:
+        if payment_frequency == "monthly":
+            months_elapsed = (now.year - first_payment_date.year) * 12 + (now.month - first_payment_date.month)
+            # If we're past the payment day in the current month, count this month too
+            if now.day >= first_payment_date.day:
+                months_elapsed += 1
+            paid_installments = min(months_elapsed, total_installments)
+        elif payment_frequency == "weekly":
+            weeks_elapsed = (now - first_payment_date).days // 7
+            paid_installments = min(weeks_elapsed, total_installments)
+        else:
+            paid_installments = 0
+
+        # Calculate remaining balance based on paid installments
+        remaining_balance = total_amount - (paid_installments * installment_amount)
+    else:
+        paid_installments = 0
+        remaining_balance = total_amount
+
+    purchase_data["installment_paid_installments"] = paid_installments
+    purchase_data["installment_remaining_balance"] = max(0, remaining_balance)
+
+    # Save the installment purchase
+    saved_purchase = upsert_row(purchase_data)
+
+    logger.info(f"Created installment purchase: {saved_purchase['id']} - {total_installments} installments of {installment_amount}, {paid_installments} already paid")
+    return saved_purchase
+
+def get_installment_purchases() -> List[Dict[str, Any]]:
+    """Get all installment purchases"""
+    df = _load_data()
+    purchases = df[df["is_installment"] == True]
+    return purchases.to_dict("records")
+
+def record_installment_payment(purchase_id: str, payment_amount: float, payment_date: Optional[str] = None) -> bool:
+    """Record a payment for an installment purchase"""
+    purchase = get(purchase_id)
+    if not purchase or not purchase.get("is_installment"):
+        logger.warning(f"Installment purchase {purchase_id} not found")
+        return False
+
+    # Update paid installments and remaining balance
+    paid_installments = int(purchase.get("installment_paid_installments", 0)) + 1
+    remaining_balance = float(purchase.get("installment_remaining_balance", 0)) - payment_amount
+
+    # Update purchase
+    purchase["installment_paid_installments"] = paid_installments
+    purchase["installment_remaining_balance"] = max(0, remaining_balance)  # Don't go negative
+
+    # Create payment record
+    payment_record = {
+        "id": str(uuid.uuid4()),
+        "fecha": payment_date or datetime.now().isoformat(),
+        "descripcion": f"Pago cuota {paid_installments} - {purchase.get('descripcion', '')}",
+        "monto_clp": payment_amount,
+        "categoria": purchase.get("categoria", "deudas"),
+        "medio": purchase.get("medio", "TC"),
+        "tipo": "installment_payment",
+        "parent_id": purchase_id,
+        "fuente": "manual",
+        "estado": "categorizado"
+    }
+
+    # Save payment and update purchase
+    upsert_row(payment_record)
+    upsert_row(purchase)
+
+    logger.info(f"Recorded installment payment: {payment_amount} for purchase {purchase_id} (installment {paid_installments})")
+    return True
+
+def get_upcoming_installment_payments(days_ahead: int = 30) -> List[Dict[str, Any]]:
+    """Get upcoming installment payments within the specified days"""
+    df = _load_data()
+    purchases = df[(df["is_installment"] == True) & (df["installment_remaining_balance"] > 0)]
+
+    upcoming_payments = []
+
+    for _, purchase in purchases.iterrows():
+        first_payment_date = purchase.get("installment_first_payment_date")
+        if pd.isna(first_payment_date):
+            continue
+
+        first_date = pd.to_datetime(first_payment_date)
+        paid_installments = int(purchase.get("installment_paid_installments", 0))
+        total_installments = int(purchase.get("installment_total_installments", 1))
+        payment_frequency = purchase.get("installment_payment_frequency", "monthly")
+
+        # Calculate next payment date
+        if payment_frequency == "monthly":
+            next_payment_date = first_date + pd.DateOffset(months=paid_installments)
+        elif payment_frequency == "weekly":
+            next_payment_date = first_date + pd.DateOffset(weeks=paid_installments)
+        else:
+            next_payment_date = first_date + pd.DateOffset(months=paid_installments)
+
+        # Check if payment is due within the specified days
+        days_until_due = (next_payment_date - pd.Timestamp.now()).days
+
+        if 0 <= days_until_due <= days_ahead and paid_installments < total_installments:
+            upcoming_payments.append({
+                "purchase_id": purchase["id"],
+                "descripcion": purchase.get("descripcion", ""),
+                "next_payment_date": next_payment_date.isoformat(),
+                "days_until_due": days_until_due,
+                "installment_amount": float(purchase.get("installment_installment_amount", 0)),
+                "installment_number": paid_installments + 1,
+                "total_installments": total_installments,
+                "remaining_balance": float(purchase.get("installment_remaining_balance", 0))
+            })
+
+    return upcoming_payments
+
+def get_installment_purchase_summary() -> Dict[str, Any]:
+    """Get summary of all installment purchases"""
+    df = _load_data()
+    purchases = df[df["is_installment"] == True]
+
+    total_debt = purchases["installment_remaining_balance"].sum()
+    total_purchases = len(purchases)
+    active_purchases = len(purchases[purchases["installment_remaining_balance"] > 0])
+
+    # Calculate monthly payment commitment
+    monthly_commitment = 0.0
+    for _, purchase in purchases.iterrows():
+        if purchase["installment_remaining_balance"] > 0:
+            frequency = purchase.get("installment_payment_frequency", "monthly")
+            if frequency == "monthly":
+                monthly_commitment += float(purchase.get("installment_installment_amount", 0))
+
+    return {
+        "total_debt": float(total_debt),
+        "total_purchases": total_purchases,
+        "active_purchases": active_purchases,
+        "monthly_commitment": monthly_commitment,
+        "upcoming_payments": get_upcoming_installment_payments(7)  # Next 7 days
+    }
+
+def update_installment_purchase(purchase_id: str, updates: Dict[str, Any]) -> bool:
+    """Update an installment purchase"""
+    purchase = get(purchase_id)
+    if not purchase or not purchase.get("is_installment"):
+        logger.warning(f"Installment purchase {purchase_id} not found")
+        return False
+
+    # Update fields
+    for key, value in updates.items():
+        if key in SCHEMA_COLUMNS:
+            purchase[key] = value
+
+    # Recalculate installment amount if relevant fields changed
+    if any(key in updates for key in ["installment_total_amount", "installment_total_installments", "installment_interest_rate"]):
+        total_amount = float(purchase.get("installment_total_amount", 0))
+        total_installments = int(purchase.get("installment_total_installments", 1))
+        interest_rate = float(purchase.get("installment_interest_rate", 0))
+
+        if interest_rate > 0:
+            total_with_interest = total_amount * (1 + (interest_rate / 100))
+            installment_amount = total_with_interest / total_installments
+        else:
+            installment_amount = total_amount / total_installments
+
+        purchase["installment_installment_amount"] = installment_amount
+        purchase["installment_remaining_balance"] = total_amount - (float(purchase.get("installment_paid_installments", 0)) * installment_amount)
+
+    upsert_row(purchase)
+    logger.info(f"Updated installment purchase: {purchase_id}")
+    return True
+
+def delete_installment_purchase(purchase_id: str) -> bool:
+    """Delete an installment purchase"""
+    purchase = get(purchase_id)
+    if not purchase or not purchase.get("is_installment"):
+        logger.warning(f"Installment purchase {purchase_id} not found")
+        return False
+
+    # Delete the purchase
+    success = delete_row(purchase_id)
+
+    if success:
+        logger.info(f"Deleted installment purchase: {purchase_id}")
+
+        # Optionally delete related payment records
+        # This could be implemented if needed
+
+    return success
+
+def generate_installment_expenses():
+    """Generate automatic expenses for current month installment payments only"""
+    df = _load_data()
+    purchases = df[(df["is_installment"] == True) & (df["installment_remaining_balance"] > 0)]
+
+    generated_count = 0
+    now = pd.Timestamp.now()
+
+    for _, purchase in purchases.iterrows():
+        first_payment_date = purchase.get("installment_first_payment_date")
+        if pd.isna(first_payment_date):
+            continue
+
+        first_date = pd.to_datetime(first_payment_date)
+        paid_installments = int(purchase.get("installment_paid_installments", 0))
+        total_installments = int(purchase.get("installment_total_installments", 1))
+        payment_frequency = purchase.get("installment_payment_frequency", "monthly")
+        installment_amount = float(purchase.get("installment_installment_amount", 0))
+
+        # Only generate expense for the current month installment
+        current_installment_num = paid_installments + 1
+
+        # Check if we still have installments to pay
+        if current_installment_num > total_installments:
+            continue
+
+        # Calculate payment date for current installment
+        if payment_frequency == "monthly":
+            payment_date = first_date + pd.DateOffset(months=current_installment_num - 1)
+        elif payment_frequency == "weekly":
+            payment_date = first_date + pd.DateOffset(weeks=current_installment_num - 1)
+        else:
+            payment_date = first_date + pd.DateOffset(months=current_installment_num - 1)
+
+        # Only generate if this installment is due this month (or within the next 30 days)
+        if payment_date.year == now.year and payment_date.month == now.month:
+            # Generate for current month
+            pass
+        elif (payment_date - now).days <= 30 and payment_date > now:
+            # Generate for upcoming installments within 30 days
+            pass
+        else:
+            # Skip installments that are not due soon
+            continue
+            # Check if expense already exists for this installment
+            existing_expenses = df[
+                (df["parent_id"] == purchase["id"]) &
+                (df["tipo"] == "installment_expense") &
+                (df["descripcion"].str.contains(f"Cuota {current_installment_num}"))
+            ]
+
+            if len(existing_expenses) == 0:
+                # Generate expense for this installment
+                expense_data = {
+                    "id": str(uuid.uuid4()),
+                    "fecha": payment_date.isoformat(),
+                    "descripcion": f"Cuota {current_installment_num} - {purchase.get('descripcion', '')}",
+                    "monto_clp": installment_amount,
+                    "categoria": purchase.get("categoria", "deudas"),
+                    "medio": purchase.get("medio", "TC"),
+                    "tipo": "installment_expense",
+                    "parent_id": purchase["id"],
+                    "fuente": "installment_auto",
+                    "estado": "categorizado",
+                    "is_installment": False  # This is the actual expense, not the purchase record
+                }
+
+                upsert_row(expense_data)
+                generated_count += 1
+
+                logger.info(f"Generated current month installment expense: {expense_data['descripcion']} for purchase {purchase['id']}")
+
+    if generated_count > 0:
+        sync_excel()
+        logger.info(f"Generated {generated_count} current month installment expenses")
+
+    return generated_count
+
+def cleanup_duplicate_installment_expenses():
+    """Clean up duplicate installment expenses from previous months"""
+    df = _load_data()
+    now = pd.Timestamp.now()
+
+    # Find installment expenses from previous months that shouldn't be there
+    duplicate_expenses = df[
+        (df["tipo"] == "installment_expense") &
+        (df["fuente"] == "installment_auto") &
+        (pd.to_datetime(df["fecha"]).dt.year < now.year) |
+        ((pd.to_datetime(df["fecha"]).dt.year == now.year) &
+         (pd.to_datetime(df["fecha"]).dt.month < now.month))
+    ]
+
+    deleted_count = 0
+    for _, expense in duplicate_expenses.iterrows():
+        delete_row(expense["id"])
+        deleted_count += 1
+        logger.info(f"Cleaned up duplicate installment expense: {expense['descripcion']}")
+
+    if deleted_count > 0:
+        sync_excel()
+        logger.info(f"Cleaned up {deleted_count} duplicate installment expenses")
+
+    return deleted_count
+
+def record_historical_installment_payment(purchase_id: str, installment_number: int, payment_amount: float, payment_date: str) -> bool:
+    """Record a historical payment for a specific installment number"""
+    purchase = get(purchase_id)
+    if not purchase or not purchase.get("is_installment"):
+        logger.warning(f"Installment purchase {purchase_id} not found")
+        return False
+
+    paid_installments = int(purchase.get("installment_paid_installments", 0))
+    total_installments = int(purchase.get("installment_total_installments", 1))
+    remaining_balance = float(purchase.get("installment_remaining_balance", 0))
+
+    # Validate installment number
+    if installment_number < 1 or installment_number > total_installments:
+        logger.warning(f"Invalid installment number {installment_number} for purchase {purchase_id}")
+        return False
+
+    # If this installment number is greater than currently paid installments, update accordingly
+    if installment_number > paid_installments:
+        # Calculate how many installments we're catching up
+        installments_to_add = installment_number - paid_installments
+        amount_to_subtract = payment_amount  # For this specific payment
+
+        # Update purchase record
+        purchase["installment_paid_installments"] = installment_number
+        purchase["installment_remaining_balance"] = max(0, remaining_balance - amount_to_subtract)
+
+        upsert_row(purchase)
+
+    # Create payment record
+    payment_record = {
+        "id": str(uuid.uuid4()),
+        "fecha": payment_date,
+        "descripcion": f"Pago cuota {installment_number} - {purchase.get('descripcion', '')}",
+        "monto_clp": payment_amount,
+        "categoria": purchase.get("categoria", "deudas"),
+        "medio": purchase.get("medio", "TC"),
+        "tipo": "installment_payment",
+        "parent_id": purchase_id,
+        "fuente": "manual",
+        "estado": "categorizado"
+    }
+
+    upsert_row(payment_record)
+
+    logger.info(f"Recorded historical installment payment: {payment_amount} for installment {installment_number} of purchase {purchase_id}")
+    return True

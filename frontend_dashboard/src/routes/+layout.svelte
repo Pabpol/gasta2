@@ -19,6 +19,7 @@
 		{ href: '/presupuestos', label: 'Presupuestos', icon: '🎯' },
 		{ href: '/gastos', label: 'Gastos', icon: '📝' },
 		{ href: '/gastos-recurrentes', label: 'Gastos Recurrentes', icon: '🔄' },
+		{ href: '/compras-cuotas', label: 'Compras en Cuotas', icon: '💳' },
 		{ href: '/configuracion', label: 'Configuración', icon: '⚙️' }
 	];
 
